@@ -19,22 +19,74 @@ import {
   type PermissionQuestionRequestData as QuestionRequestData,
   type PermissionQuestionResponseData as QuestionResponseData,
 } from '@accomplish_ai/agent-core';
+import { getLogCollector } from './logging';
+import { readJsonBody, HttpError } from './http/readJsonBody';
+
+/**
+ * Reads and parses a JSON request body, writing an appropriate error response
+ * if parsing fails. Returns the parsed body or null (response already sent).
+ */
+async function parseJsonRequest<T extends Record<string, unknown>>(
+  req: import('http').IncomingMessage,
+  res: import('http').ServerResponse,
+  maxBytes = 1 * 1024 * 1024,
+): Promise<T | null> {
+  try {
+    return await readJsonBody<T>(req, { maxBytes });
+  } catch (err) {
+    const status = err instanceof HttpError ? err.statusCode : 400;
+    const message = err instanceof HttpError ? err.message : 'Invalid request';
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: message }));
+    return null;
+  }
+}
 
 export { PERMISSION_API_PORT, QUESTION_API_PORT, isFilePermissionRequest, isQuestionRequest };
 
 // Singleton permission request handler
 const permissionHandler: PermissionHandlerAPI = createPermissionHandler();
 
-// Store reference to main window and task manager
-let mainWindow: BrowserWindow | null = null;
+// Store getter functions instead of direct references to avoid stale window captures
+let getMainWindow: (() => BrowserWindow | null) | null = null;
 let getActiveTaskId: (() => string | null) | null = null;
 
 /**
- * Initialize the permission API with dependencies
+ * Initialize the permission API with dependencies.
+ * Accepts a getter for the main window so that the current (non-destroyed)
+ * window is always resolved at request time, even after reloads/recreations.
  */
-export function initPermissionApi(window: BrowserWindow, taskIdGetter: () => string | null): void {
-  mainWindow = window;
+export function initPermissionApi(
+  getWindow: () => BrowserWindow | null,
+  taskIdGetter: () => string | null,
+): void {
+  getMainWindow = getWindow;
   getActiveTaskId = taskIdGetter;
+}
+
+/**
+ * Resolve the task ID from a request body, preferring an explicit taskId
+ * from the request (set by MCP server via ACCOMPLISH_TASK_ID env) over
+ * the active-task fallback for backwards compatibility.
+ */
+function resolveTaskIdFromRequest(
+  requestTaskId: unknown,
+  taskIdGetter: () => string | null,
+): { taskId: string | null; error?: string } {
+  if (requestTaskId === undefined) {
+    return { taskId: taskIdGetter() };
+  }
+
+  if (typeof requestTaskId !== 'string') {
+    return { taskId: null, error: 'Invalid task ID' };
+  }
+
+  const trimmed = requestTaskId.trim();
+  if (trimmed.length === 0) {
+    return { taskId: taskIdGetter() };
+  }
+
+  return { taskId: trimmed };
 }
 
 /**
@@ -70,45 +122,62 @@ export function startPermissionApiServer(): http.Server {
       return;
     }
 
-    // Only handle POST /permission
-    if (req.method !== 'POST' || req.url !== '/permission') {
+    // Handle both file permissions (/permission) and desktop permissions (/desktop-permission)
+    const isFilePermission = req.method === 'POST' && req.url === '/permission';
+    const isDesktopPermission = req.method === 'POST' && req.url === '/desktop-permission';
+    if (!isFilePermission && !isDesktopPermission) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Not found' }));
       return;
     }
 
-    // Parse request body
-    let body = '';
-    for await (const chunk of req) {
-      body += chunk;
-    }
-
-    let data: FilePermissionRequestData;
-
-    try {
-      data = JSON.parse(body);
-    } catch {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Invalid JSON' }));
+    // Parse request body with a 1 MB size cap to prevent memory exhaustion.
+    const parsed = await parseJsonRequest(req, res);
+    if (!parsed) {
       return;
     }
 
-    // Validate request using core handler
-    const validation = permissionHandler.validateFilePermissionRequest(data);
-    if (!validation.valid) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: validation.error }));
-      return;
+    // Extract taskId before type-narrowing the rest of the request
+    const requestTaskId = parsed.taskId;
+
+    // For file permissions, validate the payload strictly.
+    // For desktop permissions, only require an `operation` field (no filePath needed).
+    if (isFilePermission) {
+      const data = parsed as FilePermissionRequestData;
+      const validation = permissionHandler.validateFilePermissionRequest(data);
+      if (!validation.valid) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: validation.error }));
+        return;
+      }
+    } else {
+      // desktop-permission: just require an operation string
+      if (!parsed.operation || typeof parsed.operation !== 'string') {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'operation is required for desktop permissions' }));
+        return;
+      }
     }
+
+    const data = parsed as FilePermissionRequestData;
+
+    // Resolve the current window at request time to avoid stale references
+    const currentWindow = getMainWindow ? getMainWindow() : null;
 
     // Check if we have the necessary dependencies
-    if (!mainWindow || mainWindow.isDestroyed() || !getActiveTaskId) {
+    if (!currentWindow || currentWindow.isDestroyed() || !getActiveTaskId) {
       res.writeHead(503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Permission API not initialized' }));
       return;
     }
 
-    const taskId = getActiveTaskId();
+    const { taskId, error } = resolveTaskIdFromRequest(requestTaskId, getActiveTaskId);
+    if (error) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error }));
+      return;
+    }
+
     if (!taskId) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'No active task' }));
@@ -118,11 +187,27 @@ export function startPermissionApiServer(): http.Server {
     // Create request using core handler
     const { requestId, promise } = permissionHandler.createPermissionRequest();
 
-    // Build permission request for the UI
-    const permissionRequest = permissionHandler.buildFilePermissionRequest(requestId, taskId, data);
+    // Build permission request for the UI.
+    // For desktop permissions, synthesise a file-permission-shaped request so the
+    // existing UI component can display it without changes.
+    const uiData: FilePermissionRequestData = isDesktopPermission
+      ? ({
+          operation: String(parsed.operation),
+          // Exclude the `operation` key and show the remaining details as the
+          // file path field so the permission UI has human-readable context.
+          filePath: JSON.stringify(
+            Object.fromEntries(Object.entries(parsed).filter(([k]) => k !== 'operation')),
+          ),
+        } as unknown as FilePermissionRequestData)
+      : data;
+    const permissionRequest = permissionHandler.buildFilePermissionRequest(
+      requestId,
+      taskId,
+      uiData,
+    );
 
     // Send to renderer (Electron-specific)
-    mainWindow.webContents.send('permission:request', permissionRequest);
+    currentWindow.webContents.send('permission:request', permissionRequest);
 
     // Wait for user response
     try {
@@ -136,16 +221,20 @@ export function startPermissionApiServer(): http.Server {
   });
 
   server.listen(PERMISSION_API_PORT, '127.0.0.1', () => {
-    console.log(`[Permission API] Server listening on port ${PERMISSION_API_PORT}`);
+    getLogCollector().logEnv(
+      'INFO',
+      `[Permission API] Server listening on port ${PERMISSION_API_PORT}`,
+    );
   });
 
   server.on('error', (error: NodeJS.ErrnoException) => {
     if (error.code === 'EADDRINUSE') {
-      console.warn(
+      getLogCollector().logEnv(
+        'WARN',
         `[Permission API] Port ${PERMISSION_API_PORT} already in use, skipping server start`,
       );
     } else {
-      console.error('[Permission API] Server error:', error);
+      getLogCollector().logEnv('ERROR', '[Permission API] Server error:', { error: String(error) });
     }
   });
 
@@ -176,21 +265,15 @@ export function startQuestionApiServer(): http.Server {
       return;
     }
 
-    // Parse request body
-    let body = '';
-    for await (const chunk of req) {
-      body += chunk;
-    }
-
-    let data: QuestionRequestData;
-
-    try {
-      data = JSON.parse(body);
-    } catch {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Invalid JSON' }));
+    // Parse request body with a 1 MB size cap to prevent memory exhaustion.
+    const parsed = await parseJsonRequest(req, res);
+    if (!parsed) {
       return;
     }
+
+    // Extract taskId before type-narrowing the rest of the request
+    const requestTaskId = parsed.taskId;
+    const data = parsed as QuestionRequestData;
 
     // Validate request using core handler
     const validation = permissionHandler.validateQuestionRequest(data);
@@ -200,14 +283,23 @@ export function startQuestionApiServer(): http.Server {
       return;
     }
 
+    // Resolve the current window at request time to avoid stale references
+    const currentWindow = getMainWindow ? getMainWindow() : null;
+
     // Check if we have the necessary dependencies
-    if (!mainWindow || mainWindow.isDestroyed() || !getActiveTaskId) {
+    if (!currentWindow || currentWindow.isDestroyed() || !getActiveTaskId) {
       res.writeHead(503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Question API not initialized' }));
       return;
     }
 
-    const taskId = getActiveTaskId();
+    const { taskId, error } = resolveTaskIdFromRequest(requestTaskId, getActiveTaskId);
+    if (error) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error }));
+      return;
+    }
+
     if (!taskId) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'No active task' }));
@@ -221,7 +313,7 @@ export function startQuestionApiServer(): http.Server {
     const questionRequest = permissionHandler.buildQuestionRequest(requestId, taskId, data);
 
     // Send to renderer (Electron-specific)
-    mainWindow.webContents.send('permission:request', questionRequest);
+    currentWindow.webContents.send('permission:request', questionRequest);
 
     // Wait for user response
     try {
@@ -235,16 +327,20 @@ export function startQuestionApiServer(): http.Server {
   });
 
   server.listen(QUESTION_API_PORT, '127.0.0.1', () => {
-    console.log(`[Question API] Server listening on port ${QUESTION_API_PORT}`);
+    getLogCollector().logEnv(
+      'INFO',
+      `[Question API] Server listening on port ${QUESTION_API_PORT}`,
+    );
   });
 
   server.on('error', (error: NodeJS.ErrnoException) => {
     if (error.code === 'EADDRINUSE') {
-      console.warn(
+      getLogCollector().logEnv(
+        'WARN',
         `[Question API] Port ${QUESTION_API_PORT} already in use, skipping server start`,
       );
     } else {
-      console.error('[Question API] Server error:', error);
+      getLogCollector().logEnv('ERROR', '[Question API] Server error:', { error: String(error) });
     }
   });
 

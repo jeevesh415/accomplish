@@ -4,9 +4,11 @@ import type {
   LiteLLMConfig,
   AzureFoundryConfig,
   LMStudioConfig,
+  NimConfig,
 } from '../../common/types/provider.js';
 import type { ThemePreference } from '../../types/storage.js';
 import type { SandboxConfig } from '../../common/types/sandbox.js';
+import type { CloudBrowserConfig } from '../../common/types/cloud-browser.js';
 import { DEFAULT_SANDBOX_CONFIG } from '../../common/types/sandbox.js';
 import { getDatabase } from '../database.js';
 import { safeParseJsonWithFallback } from '../../utils/json.js';
@@ -22,7 +24,11 @@ interface AppSettingsRow {
   lmstudio_config: string | null;
   openai_base_url: string | null;
   theme: string;
+  run_in_background: number;
   sandbox_config: string;
+  cloud_browser_config: string | null;
+  notifications_enabled: number;
+  nim_config: string | null;
 }
 
 export interface AppSettings {
@@ -35,6 +41,7 @@ export interface AppSettings {
   lmstudioConfig: LMStudioConfig | null;
   openaiBaseUrl: string;
   theme: ThemePreference;
+  runInBackground: boolean;
 }
 
 function getRow(): AppSettingsRow {
@@ -143,6 +150,23 @@ export function setLMStudioConfig(config: LMStudioConfig | null): void {
   );
 }
 
+export function getNimConfig(): NimConfig | null {
+  const row = getRow();
+  if (!row.nim_config) return null;
+  try {
+    return JSON.parse(row.nim_config) as NimConfig;
+  } catch {
+    return null;
+  }
+}
+
+export function setNimConfig(config: NimConfig | null): void {
+  const db = getDatabase();
+  db.prepare('UPDATE app_settings SET nim_config = ? WHERE id = 1').run(
+    config ? JSON.stringify(config) : null,
+  );
+}
+
 export function getOpenAiBaseUrl(): string {
   const row = getRow();
   return row.openai_base_url || '';
@@ -172,6 +196,15 @@ export function setTheme(theme: ThemePreference): void {
   db.prepare('UPDATE app_settings SET theme = ? WHERE id = 1').run(theme);
 }
 
+export function getRunInBackground(): boolean {
+  return getRow().run_in_background === 1;
+}
+
+export function setRunInBackground(enabled: boolean): void {
+  const db = getDatabase();
+  db.prepare('UPDATE app_settings SET run_in_background = ? WHERE id = 1').run(enabled ? 1 : 0);
+}
+
 export function getSandboxConfig(): SandboxConfig {
   const row = getRow();
   const parsed = safeParseJsonWithFallback<Partial<SandboxConfig>>(row.sandbox_config);
@@ -194,6 +227,32 @@ export function setSandboxConfig(config: SandboxConfig): void {
   db.prepare('UPDATE app_settings SET sandbox_config = ? WHERE id = 1').run(JSON.stringify(config));
 }
 
+export function getCloudBrowserConfig(): CloudBrowserConfig | null {
+  const row = getRow();
+  if (!row.cloud_browser_config) return null;
+  try {
+    return JSON.parse(row.cloud_browser_config) as CloudBrowserConfig;
+  } catch {
+    return null;
+  }
+}
+
+export function setCloudBrowserConfig(config: CloudBrowserConfig | null): void {
+  const db = getDatabase();
+  db.prepare('UPDATE app_settings SET cloud_browser_config = ? WHERE id = 1').run(
+    config ? JSON.stringify(config) : null,
+  );
+}
+
+export function getNotificationsEnabled(): boolean {
+  return getRow().notifications_enabled === 1;
+}
+
+export function setNotificationsEnabled(enabled: boolean): void {
+  const db = getDatabase();
+  db.prepare('UPDATE app_settings SET notifications_enabled = ? WHERE id = 1').run(enabled ? 1 : 0);
+}
+
 export function getAppSettings(): AppSettings {
   const row = getRow();
   return {
@@ -208,6 +267,7 @@ export function getAppSettings(): AppSettings {
     theme: VALID_THEMES.includes(row.theme as ThemePreference)
       ? (row.theme as ThemePreference)
       : 'system',
+    runInBackground: row.run_in_background === 1,
   };
 }
 
@@ -222,9 +282,13 @@ export function clearAppSettings(): void {
       litellm_config = NULL,
       azure_foundry_config = NULL,
       lmstudio_config = NULL,
+      nim_config = NULL,
       openai_base_url = '',
       theme = 'system',
-      sandbox_config = '${JSON.stringify(DEFAULT_SANDBOX_CONFIG)}'
+      run_in_background = 0,
+      sandbox_config = '${JSON.stringify(DEFAULT_SANDBOX_CONFIG)}',
+      cloud_browser_config = NULL,
+      notifications_enabled = 1
     WHERE id = 1`,
   ).run();
 }

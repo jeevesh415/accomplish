@@ -122,7 +122,8 @@
   },
   "lmstudio": {
     "serverUrl": "LM Studio 服务器地址",
-    "serverHint": "启动 LM Studio 并在开发者设置中启用本地服务器"
+    "serverHint": "启动 LM Studio 并在开发者设置中启用本地服务器",
+    "refreshModels": "刷新模型列表"
   },
   "vertex": {
     "serviceAccountTab": "服务账号",
@@ -175,7 +176,8 @@
     "selectModel": "选择模型",
     "useThisModel": "使用此模型",
     "helpText": "请确保已安装并运行 <link>Ollama</link>，然后点击测试连接。",
-    "currentlyUsing": "当前使用"
+    "currentlyUsing": "当前使用",
+    "refreshModels": "刷新模型列表"
   },
   "bedrock": {
     "accessKeys": "访问密钥",
@@ -218,9 +220,19 @@
     "providers": "服务商",
     "connectors": "连接器",
     "skills": "技能",
+    "daemon": "后台守护进程",
+    "browsers": "云浏览器",
     "voiceInput": "语音输入",
+    "workspaces": "工作区",
     "appearance": "外观",
+    "general": "通用",
     "about": "关于"
+  },
+  "notifications": {
+    "toggle": {
+      "label": "桌面通知",
+      "description": "当应用在后台运行时，任务完成后显示系统通知。"
+    }
   },
   "appearance": {
     "title": "主题",
@@ -353,16 +365,16 @@
     "buildWithAccomplish": "使用 Accomplish 构建",
     "buildDescription": "通过对话创建技能",
     "uploadSkill": "上传技能",
-    "uploadDescription": "上传 SKILL.md 文件",
+    "uploadDescription": "选择技能文件夹以导入",
     "importFromGitHub": "从 GitHub 导入",
     "importDescription": "粘贴仓库链接",
     "importDialogDescription": "输入包含 SKILL.md 文件的 GitHub 仓库 URL。",
     "importing": "导入中...",
     "import": "导入",
     "uploadFailedTitle": "上传失败",
-    "uploadFailedDescription": "无法上传技能文件。",
+    "uploadFailedDescription": "无法上传技能文件夹。",
     "uploadErrorHelp": "确保您的 SKILL.md 文件包含有效的 YAML frontmatter，至少包含一个",
-    "selectFile": "选择 SKILL.md 文件",
+    "selectFile": "选择技能文件夹",
     "uploadErrorField": "name",
     "uploadErrorFieldSuffix": "字段：",
     "ok": "确定",
@@ -430,5 +442,9 @@
     "tooltipError": "转录过程中出错 - 点击重试",
     "tooltipDefault": "点击录音或按住 Alt 键进行语音输入",
     "processing": "处理中..."
+  },
+  "baseUrl": {
+    "title": "基础 URL",
+    "description": "留空以使用默认 URL。"
   }
 }

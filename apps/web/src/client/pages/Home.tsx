@@ -8,6 +8,7 @@ import { MAX_FILES, processFileAttachments } from '@/lib/fileUtils';
 import { SettingsDialog } from '@/components/layout/SettingsDialog';
 import { useTaskStore } from '@/stores/taskStore';
 import { getAccomplish } from '@/lib/accomplish';
+import { createLogger } from '@/lib/logger';
 import { springs } from '@/lib/animations';
 import { X, ArrowUpLeft } from '@phosphor-icons/react';
 import { hasAnyReadyProvider } from '@accomplish_ai/agent-core/common';
@@ -28,10 +29,13 @@ const USE_CASE_KEYS = [
 
 const FAVORITES_PREVIEW_COUNT = 6;
 
+const logger = createLogger('Home');
+
 export function HomePage() {
   const [prompt, setPrompt] = useState('');
   const [showAllFavorites, setShowAllFavorites] = useState(false);
   const [attachments, setAttachments] = useState<FileAttachmentInfo[]>([]);
+  const [workingDirectory, setWorkingDirectory] = useState<string | undefined>(undefined);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<
     'providers' | 'voice' | 'skills' | 'connectors'
@@ -49,6 +53,7 @@ export function HomePage() {
 
   const useCaseExamples = useMemo(() => {
     return USE_CASE_KEYS.map(({ key, icons }) => ({
+      key,
       title: t(`useCases.${key}.title`),
       description: t(`useCases.${key}.description`),
       prompt: t(`useCases.${key}.prompt`),
@@ -103,12 +108,26 @@ export function HomePage() {
 
     const taskId = `task_${Date.now()}`;
     const enrichedPrompt = buildPromptWithAttachments(prompt.trim(), attachments);
-    const task = await startTask({ prompt: enrichedPrompt, taskId, files: attachments });
+    const task = await startTask({
+      prompt: enrichedPrompt,
+      taskId,
+      files: attachments,
+      workingDirectory,
+    });
     if (task) {
       setAttachments([]);
+      setWorkingDirectory(undefined);
       navigate(`/execution/${task.id}`);
     }
-  }, [prompt, attachments, isLoading, startTask, navigate, buildPromptWithAttachments]);
+  }, [
+    prompt,
+    attachments,
+    workingDirectory,
+    isLoading,
+    startTask,
+    navigate,
+    buildPromptWithAttachments,
+  ]);
 
   const handleSubmit = async () => {
     if (isLoading) {
@@ -119,17 +138,21 @@ export function HomePage() {
       return;
     }
 
-    const isE2EMode = await accomplish.isE2EMode();
-    if (!isE2EMode) {
-      const settings = await accomplish.getProviderSettings();
-      if (!hasAnyReadyProvider(settings)) {
-        setSettingsInitialTab('providers');
-        setShowSettingsDialog(true);
-        return;
+    try {
+      const isE2EMode = await accomplish.isE2EMode();
+      if (!isE2EMode) {
+        const settings = await accomplish.getProviderSettings();
+        if (!hasAnyReadyProvider(settings)) {
+          setSettingsInitialTab('providers');
+          setShowSettingsDialog(true);
+          return;
+        }
       }
-    }
 
-    await executeTask();
+      await executeTask();
+    } catch (err) {
+      logger.error('Failed to submit task:', err);
+    }
   };
 
   const handleSettingsDialogChange = (open: boolean) => {
@@ -253,12 +276,28 @@ export function HomePage() {
                       setShowSettingsDialog(true);
                     }}
                     onAttachFiles={handleAttachFiles}
+                    onSelectFolder={setWorkingDirectory}
                     disabled={isLoading}
                     attachmentCount={attachments.length}
                     maxAttachments={MAX_FILES}
                   />
                 }
               />
+              {workingDirectory && (
+                <div className="flex items-center gap-1.5 mt-1.5 text-xs text-muted-foreground">
+                  <span className="truncate max-w-[400px]" title={workingDirectory}>
+                    {t('selectedFolder.badge', { folder: workingDirectory })}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setWorkingDirectory(undefined)}
+                    className="ml-1 hover:text-foreground transition-colors"
+                    aria-label={t('selectedFolder.clearAriaLabel')}
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
             </motion.div>
 
             <div
@@ -351,7 +390,7 @@ export function HomePage() {
                 <div className="grid grid-cols-3 gap-4 w-full">
                   {useCaseExamples.map((example, index) => (
                     <motion.button
-                      key={index}
+                      key={example.key}
                       data-testid={`home-example-${index}`}
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}

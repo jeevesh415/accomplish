@@ -2,6 +2,8 @@ import * as pty from 'node-pty';
 import { app, shell } from 'electron';
 import { getOpenCodeCliPath } from './electron-options';
 import { generateOpenCodeConfig } from './config-generator';
+import { isOpenCodeCliInstallError, INSTALL_ERROR_MESSAGE } from './cli-error-utils';
+import { getLogCollector } from '../logging';
 import {
   stripAnsi,
   quoteForShell,
@@ -31,13 +33,38 @@ export class OAuthBrowserFlow {
 
   async start(): Promise<LoginResult> {
     if (this.isInProgress()) {
-      console.log('[OAuthBrowserFlow] Cancelling previous flow before starting new one');
+      try {
+        const l = getLogCollector();
+        if (l?.log) {
+          l.log(
+            'INFO',
+            'opencode',
+            '[OAuthBrowserFlow] Cancelling previous flow before starting new one',
+          );
+        }
+      } catch (_e) {
+        /* best-effort logging */
+      }
       await this.cancel();
       try {
         await waitForPortRelease(1455, 2000);
-        console.log('[OAuthBrowserFlow] Port 1455 released');
+        try {
+          const l = getLogCollector();
+          if (l?.log) {
+            l.log('INFO', 'opencode', '[OAuthBrowserFlow] Port 1455 released');
+          }
+        } catch (_e) {
+          /* best-effort logging */
+        }
       } catch {
-        console.warn('[OAuthBrowserFlow] Port 1455 still in use after 2000ms');
+        try {
+          const l = getLogCollector();
+          if (l?.log) {
+            l.log('WARN', 'opencode', '[OAuthBrowserFlow] Port 1455 still in use after 2000ms');
+          }
+        } catch (_e) {
+          /* best-effort logging */
+        }
       }
     }
 
@@ -112,6 +139,19 @@ export class OAuthBrowserFlow {
           return;
         }
 
+        // Detect known CLI installation error patterns and surface a friendly message
+        if (isOpenCodeCliInstallError(buffer)) {
+          getLogCollector().logEnv('WARN', '[Auth] CLI install error detected', {
+            // Redact URLs and potential tokens before logging
+            tail: buffer
+              .slice(-200)
+              .replace(/https?:\/\/\S+/gi, '[URL]')
+              .replace(/[A-Za-z0-9_-]{30,}/g, '[REDACTED]'),
+          });
+          reject(new Error(INSTALL_ERROR_MESSAGE));
+          return;
+        }
+
         const tail = buffer.trim().split('\n').slice(-15).join('\n');
         const redacted = tail
           .replace(/https?:\/\/\S+/g, '[url]')
@@ -128,11 +168,25 @@ export class OAuthBrowserFlow {
 
   async cancel(): Promise<void> {
     if (!this.activePty) {
-      console.log('[OAuthBrowserFlow] No active flow to cancel');
+      try {
+        const l = getLogCollector();
+        if (l?.log) {
+          l.log('INFO', 'opencode', '[OAuthBrowserFlow] No active flow to cancel');
+        }
+      } catch (_e) {
+        /* best-effort logging */
+      }
       return;
     }
 
-    console.log('[OAuthBrowserFlow] Cancelling active OAuth flow');
+    try {
+      const l = getLogCollector();
+      if (l?.log) {
+        l.log('INFO', 'opencode', '[OAuthBrowserFlow] Cancelling active OAuth flow');
+      }
+    } catch (_e) {
+      /* best-effort logging */
+    }
 
     const ptyProcess = this.activePty;
 
@@ -146,11 +200,27 @@ export class OAuthBrowserFlow {
     const gracefulExited = await this.waitForExit(ptyProcess, 1000);
 
     if (!gracefulExited && this.activePty === ptyProcess) {
-      console.log('[OAuthBrowserFlow] Force killing after graceful timeout');
+      try {
+        const l = getLogCollector();
+        if (l?.log) {
+          l.log('INFO', 'opencode', '[OAuthBrowserFlow] Force killing after graceful timeout');
+        }
+      } catch (_e) {
+        /* best-effort logging */
+      }
       try {
         ptyProcess.kill();
       } catch (err) {
-        console.warn('[OAuthBrowserFlow] Error during force kill:', err);
+        try {
+          const l = getLogCollector();
+          if (l?.log) {
+            l.log('WARN', 'opencode', '[OAuthBrowserFlow] Error during force kill', {
+              err: String(err),
+            });
+          }
+        } catch (_e) {
+          /* best-effort logging */
+        }
       }
     }
 
@@ -160,14 +230,30 @@ export class OAuthBrowserFlow {
   dispose(): void {
     if (this.isDisposed) return;
 
-    console.log('[OAuthBrowserFlow] Disposing');
+    try {
+      const l = getLogCollector();
+      if (l?.log) {
+        l.log('INFO', 'opencode', '[OAuthBrowserFlow] Disposing');
+      }
+    } catch (_e) {
+      /* best-effort logging */
+    }
     this.isDisposed = true;
 
     if (this.activePty) {
       try {
         this.activePty.kill();
       } catch (err) {
-        console.warn('[OAuthBrowserFlow] Error killing PTY during dispose:', err);
+        try {
+          const l = getLogCollector();
+          if (l?.log) {
+            l.log('WARN', 'opencode', '[OAuthBrowserFlow] Error killing PTY during dispose', {
+              err: String(err),
+            });
+          }
+        } catch (_e) {
+          /* best-effort logging */
+        }
       }
       this.activePty = null;
     }

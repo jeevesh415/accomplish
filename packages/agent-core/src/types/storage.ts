@@ -6,6 +6,7 @@ import type {
   LiteLLMConfig,
   AzureFoundryConfig,
   LMStudioConfig,
+  NimConfig,
 } from '../common/types/provider.js';
 import type {
   ProviderId,
@@ -14,6 +15,8 @@ import type {
 } from '../common/types/providerSettings.js';
 import type { McpConnector, ConnectorStatus, OAuthTokens } from '../common/types/connector.js';
 import type { SandboxConfig } from '../common/types/sandbox.js';
+import type { CloudBrowserConfig } from '../common/types/cloud-browser.js';
+import type { BlocklistEntry } from '../common/types/desktop.js';
 
 /** Options for creating a Storage instance */
 export interface StorageOptions {
@@ -62,6 +65,7 @@ export interface AppSettings {
   lmstudioConfig: LMStudioConfig | null;
   openaiBaseUrl: string;
   theme: ThemePreference;
+  runInBackground: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +138,10 @@ export interface AppSettingsAPI {
   getLMStudioConfig(): LMStudioConfig | null;
   /** Set the LM Studio configuration */
   setLMStudioConfig(config: LMStudioConfig | null): void;
+  /** Get the NVIDIA NIM configuration */
+  getNimConfig(): NimConfig | null;
+  /** Set the NVIDIA NIM configuration */
+  setNimConfig(config: NimConfig | null): void;
   /** Get the custom OpenAI base URL */
   getOpenAiBaseUrl(): string;
   /** Set the custom OpenAI base URL */
@@ -142,6 +150,18 @@ export interface AppSettingsAPI {
   getTheme(): ThemePreference;
   /** Set the theme preference */
   setTheme(theme: ThemePreference): void;
+  /** Get whether the app runs in background (system tray) mode */
+  getRunInBackground(): boolean;
+  /** Set background run mode */
+  setRunInBackground(enabled: boolean): void;
+  /** Get cloud browser configuration */
+  getCloudBrowserConfig(): CloudBrowserConfig | null;
+  /** Set cloud browser configuration */
+  setCloudBrowserConfig(config: CloudBrowserConfig | null): void;
+  /** Get whether desktop notifications are enabled */
+  getNotificationsEnabled(): boolean;
+  /** Enable or disable desktop notifications */
+  setNotificationsEnabled(enabled: boolean): void;
   /** Get all application settings as a snapshot */
   getAppSettings(): AppSettings;
   /** Reset all application settings to defaults */
@@ -246,7 +266,19 @@ export interface DatabaseLifecycleAPI {
   getDatabasePath(): string | null;
 }
 
-/** Unified storage API combining task, settings, provider, secure storage, connector, and database lifecycle operations */
+/** API for managing the desktop-control sensitive app blocklist */
+export interface DesktopControlStorageAPI {
+  /** Get the user's custom blocklist entries */
+  getDesktopBlocklist(): BlocklistEntry[];
+  /** Set the user's custom blocklist entries */
+  setDesktopBlocklist(entries: BlocklistEntry[]): void;
+  /** Add a single entry to the blocklist (deduplicates by appName) */
+  addDesktopBlocklistEntry(entry: BlocklistEntry): void;
+  /** Remove an entry from the blocklist by appName */
+  removeDesktopBlocklistEntry(appName: string): void;
+}
+
+/** Unified storage API combining task, settings, provider, secure storage, connector, desktop control, and database lifecycle operations */
 export interface StorageAPI
   extends
     TaskStorageAPI,
@@ -254,6 +286,7 @@ export interface StorageAPI
     ProviderSettingsAPI,
     SecureStorageAPI,
     ConnectorStorageAPI,
+    DesktopControlStorageAPI,
     DatabaseLifecycleAPI {}
 
 export type {
@@ -272,4 +305,5 @@ export type {
   McpConnector,
   ConnectorStatus,
   OAuthTokens,
+  CloudBrowserConfig,
 };

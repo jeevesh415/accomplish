@@ -6,6 +6,7 @@ import path from 'path';
 
 import { StreamParser } from './StreamParser.js';
 import { OpenCodeLogWatcher, createLogWatcher, OpenCodeLogError } from './OpenCodeLogWatcher.js';
+import { classifyProcessError } from '../utils/process-error-classifier.js';
 import {
   CompletionEnforcer,
   CompletionEnforcerCallbacks,
@@ -16,11 +17,33 @@ import type { OpenCodeMessage } from '../../common/types/opencode.js';
 import type { PermissionRequest } from '../../common/types/permission.js';
 import type { TodoItem } from '../../common/types/todo.js';
 import type { SandboxConfig, SandboxProvider } from '../../common/types/sandbox.js';
+import type { BrowserFramePayload } from '../../common/types/browser-view.js';
 import { DEFAULT_SANDBOX_CONFIG } from '../../common/types/sandbox.js';
 import { DisabledSandboxProvider } from '../../sandbox/disabled-provider.js';
 import { serializeError } from '../../utils/error.js';
+import { getOAuthProviderDisplayName, isOAuthProviderId } from '../../common/types/connector.js';
+import { CONNECTOR_AUTH_REQUIRED_MARKER } from '../../common/constants.js';
+import { createConsoleLogger } from '../../utils/logging.js';
+
+const log = createConsoleLogger({ prefix: 'OpenCodeAdapter' });
 
 const LOG_TRUNCATION_LIMIT = 500;
+
+/** Windows STATUS_CONTROL_C_EXIT — exit code produced when a process is
+ *  terminated via Ctrl+C (0xC000013A). On Windows this is not an error;
+ *  treat it the same as a clean exit (code === 0). */
+export const WINDOWS_CTRL_C_EXIT_CODE = -1073741510;
+
+export const isNormalExit = (code: number | null, platform?: string): boolean =>
+  code === 0 || (platform === 'win32' && code === WINDOWS_CTRL_C_EXIT_CODE);
+
+interface ConnectorAuthPauseInput {
+  providerId?: string;
+  message?: string;
+  label?: string;
+  pendingLabel?: string;
+  successText?: string;
+}
 
 export class OpenCodeCliNotFoundError extends Error {
   constructor() {
@@ -62,6 +85,9 @@ export interface OpenCodeAdapterEvents {
   debug: [{ type: string; message: string; data?: unknown }];
   'todo:update': [TodoItem[]];
   'auth-error': [{ providerId: string; message: string }];
+  /** Live browser preview frame — emitted when the dev-browser-mcp tool writes a JSON frame to stdout.
+   *  Contributed by samarthsinh2660 (PR #414) for ENG-695. */
+  'browser-frame': [BrowserFramePayload];
   reasoning: [string];
   'tool-call-complete': [
     {
@@ -102,6 +128,82 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
   private waitingTransitionTimer: ReturnType<typeof setTimeout> | null = null;
   private hasReceivedFirstTool: boolean = false;
   private startTaskCalled: boolean = false;
+  private outputBuffer: string = '';
+  /** Rolling buffer for reassembling split JSON lines from dev-browser-mcp stdout.
+   *  Contributed by samarthsinh2660 (PR #414) for ENG-695. */
+  private browserFrameBuffer: string = '';
+  private static readonly OUTPUT_BUFFER_MAX = 4096;
+
+  private appendToOutputBuffer(data: string): void {
+    if (data.length >= OpenCodeAdapter.OUTPUT_BUFFER_MAX) {
+      this.outputBuffer = data.slice(-OpenCodeAdapter.OUTPUT_BUFFER_MAX);
+    } else {
+      this.outputBuffer = (this.outputBuffer + data).slice(-OpenCodeAdapter.OUTPUT_BUFFER_MAX);
+    }
+  }
+
+  /**
+   * Scan stdout data for JSON-encoded browser frame messages written by dev-browser-mcp.
+   * Each frame line has the shape: `{"type":"browser-frame","taskId":...,"pageName":...,"frame":...,"timestamp":...}`.
+   *
+   * Lines may be split across PTY data chunks, so we maintain a rolling buffer to reassemble them.
+   * On match, emits the `'browser-frame'` event consumed by TaskManager → task-callbacks → renderer.
+   *
+   * Returns only the non-browser-frame lines so callers can safely feed the result into
+   * `appendToOutputBuffer` / `StreamParser` without polluting them with large base64 payloads.
+   *
+   * Contributed by samarthsinh2660 (PR #414) for ENG-695.
+   */
+  private checkForBrowserFrame(data: string): string {
+    try {
+      const combined = `${this.browserFrameBuffer}${data}`;
+      const lines = combined.split('\n');
+      // Keep the incomplete trailing chunk for the next call
+      this.browserFrameBuffer = lines.pop() ?? '';
+
+      const passthrough: string[] = [];
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          passthrough.push(line);
+          continue;
+        }
+
+        let isBrowserFrame = false;
+        try {
+          const parsed = JSON.parse(trimmed) as {
+            type?: string;
+            frame?: string;
+            pageName?: string;
+            timestamp?: number;
+          };
+          if (parsed.type === 'browser-frame' && parsed.frame && parsed.pageName) {
+            const framePayload: BrowserFramePayload = {
+              pageName: parsed.pageName,
+              frame: parsed.frame,
+              timestamp: parsed.timestamp ?? Date.now(),
+            };
+            this.emit('browser-frame', framePayload);
+            isBrowserFrame = true;
+          }
+        } catch {
+          // Not JSON or not a browser-frame — pass through as-is
+        }
+
+        if (!isBrowserFrame) {
+          passthrough.push(line);
+        }
+      }
+
+      // Re-join lines; trailing incomplete chunk stays in browserFrameBuffer
+      return passthrough.join('\n');
+    } catch {
+      // Ignore errors in frame detection to avoid breaking the main data path
+      return data;
+    }
+  }
+
   private options: AdapterOptions;
   private sandboxProvider: SandboxProvider;
   private sandboxConfig: SandboxConfig;
@@ -161,7 +263,7 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
 
     this.logWatcher.on('error', (error: OpenCodeLogError) => {
       if (!this.hasCompleted && this.ptyProcess) {
-        console.log('[OpenCode Adapter] Log watcher detected error:', error.errorName);
+        log.info(`[OpenCode Adapter] Log watcher detected error: ${error.errorName}`);
 
         const errorMessage = OpenCodeLogWatcher.getErrorMessage(error);
 
@@ -178,7 +280,7 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
         });
 
         if (error.isAuthError && error.providerID) {
-          console.log('[OpenCode Adapter] Emitting auth-error for provider:', error.providerID);
+          log.info(`[OpenCode Adapter] Emitting auth-error for provider: ${error.providerID}`);
           this.emit('auth-error', {
             providerId: error.providerID,
             message: errorMessage,
@@ -196,7 +298,9 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
           try {
             this.ptyProcess.kill();
           } catch (err) {
-            console.warn('[OpenCode Adapter] Error killing PTY after log error:', err);
+            log.warn('[OpenCode Adapter] Error killing PTY after log error:', {
+              error: String(err),
+            });
           }
           this.ptyProcess = null;
         }
@@ -221,6 +325,7 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
     this.lastWorkingDirectory = config.workingDirectory;
     this.hasReceivedFirstTool = false;
     this.startTaskCalled = false;
+    this.outputBuffer = '';
     if (this.waitingTransitionTimer) {
       clearTimeout(this.waitingTransitionTimer);
       this.waitingTransitionTimer = null;
@@ -238,7 +343,7 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
 
     const { command, args: baseArgs } = this.options.getCliCommand();
     const startMsg = `Starting: ${command} ${[...baseArgs, ...cliArgs].join(' ')}`;
-    console.log('[OpenCode CLI]', startMsg);
+    log.info(`[OpenCode CLI] ${startMsg}`);
     this.emit('debug', { type: 'info', message: startMsg });
 
     const env = await this.options.buildEnvironment(taskId);
@@ -257,16 +362,18 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
             dummyPackageJson,
             JSON.stringify({ name: 'opencode-workspace', private: true }, null, 2),
           );
-          console.log('[OpenCode CLI] Created workspace package.json at:', dummyPackageJson);
+          log.info(`[OpenCode CLI] Created workspace package.json at: ${dummyPackageJson}`);
         } catch (err) {
-          console.warn('[OpenCode CLI] Could not create workspace package.json:', err);
+          log.warn('[OpenCode CLI] Could not create workspace package.json:', {
+            error: String(err),
+          });
         }
       }
     }
 
-    console.log('[OpenCode CLI]', cmdMsg);
-    console.log('[OpenCode CLI]', argsMsg);
-    console.log('[OpenCode CLI]', cwdMsg);
+    log.info(`[OpenCode CLI] ${cmdMsg}`);
+    log.info(`[OpenCode CLI] ${argsMsg}`);
+    log.info(`[OpenCode CLI] ${cwdMsg}`);
 
     this.emit('debug', { type: 'info', message: cmdMsg });
     this.emit('debug', { type: 'info', message: argsMsg, data: { args: allArgs } });
@@ -276,7 +383,7 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
       const { file: spawnFile, args: spawnArgs } = this.buildPtySpawnArgs(command, allArgs);
 
       const spawnMsg = `PTY spawn: ${spawnFile} ${spawnArgs.join(' ')}`;
-      console.log('[OpenCode CLI]', spawnMsg);
+      log.info(`[OpenCode CLI] ${spawnMsg}`);
       this.emit('debug', { type: 'info', message: spawnMsg });
 
       const sandboxedArgs = await this.sandboxProvider.wrapSpawnArgs(
@@ -297,7 +404,7 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
         env: sandboxedArgs.env,
       });
       const pidMsg = `PTY Process PID: ${this.ptyProcess.pid}`;
-      console.log('[OpenCode CLI]', pidMsg);
+      log.info(`[OpenCode CLI] ${pidMsg}`);
       this.emit('debug', { type: 'info', message: pidMsg });
 
       this.emit('progress', { stage: 'loading', message: 'Loading agent...' });
@@ -309,20 +416,27 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
           .replace(/\x1B\][^\x07]*\x07/g, '')
           .replace(/\x1B\][^\x1B]*\x1B\\/g, '');
         /* eslint-enable no-control-regex */
-        if (cleanData.trim()) {
-          const truncated =
-            cleanData.substring(0, LOG_TRUNCATION_LIMIT) +
-            (cleanData.length > LOG_TRUNCATION_LIMIT ? '...' : '');
-          console.log('[OpenCode CLI stdout]:', truncated);
-          this.emit('debug', { type: 'stdout', message: cleanData });
+        // Check for embedded browser-frame JSON lines (even for split PTY chunks).
+        // Use the returned value — browser-frame lines are stripped so they don't
+        // pollute outputBuffer or StreamParser with large base64 payloads.
+        const passthroughData = this.checkForBrowserFrame(cleanData);
 
-          this.streamParser.feed(cleanData);
+        if (passthroughData.trim()) {
+          const truncated =
+            passthroughData.substring(0, LOG_TRUNCATION_LIMIT) +
+            (passthroughData.length > LOG_TRUNCATION_LIMIT ? '...' : '');
+          log.info(`[OpenCode CLI stdout]: ${truncated}`);
+          this.emit('debug', { type: 'stdout', message: passthroughData });
+
+          this.appendToOutputBuffer(passthroughData);
+
+          this.streamParser.feed(passthroughData);
         }
       });
 
       this.ptyProcess.onExit(({ exitCode, signal }) => {
         const exitMsg = `PTY Process exited with code: ${exitCode}, signal: ${signal}`;
-        console.log('[OpenCode CLI]', exitMsg);
+        log.info(`[OpenCode CLI] ${exitMsg}`);
         this.emit('debug', { type: 'exit', message: exitMsg, data: { exitCode, signal } });
         this.handleProcessExit(exitCode);
       });
@@ -351,7 +465,7 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
     }
 
     this.ptyProcess.write(response + '\n');
-    console.log('[OpenCode CLI] Response sent via PTY');
+    log.info('[OpenCode CLI] Response sent via PTY');
   }
 
   async cancelTask(): Promise<void> {
@@ -363,20 +477,20 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
 
   async interruptTask(): Promise<void> {
     if (!this.ptyProcess) {
-      console.log('[OpenCode CLI] No active process to interrupt');
+      log.info('[OpenCode CLI] No active process to interrupt');
       return;
     }
 
     this.wasInterrupted = true;
 
     this.ptyProcess.write('\x03');
-    console.log('[OpenCode CLI] Sent Ctrl+C interrupt signal');
+    log.info('[OpenCode CLI] Sent Ctrl+C interrupt signal');
 
     if (this.options.platform === 'win32') {
       setTimeout(() => {
         if (this.ptyProcess) {
           this.ptyProcess.write('Y\n');
-          console.log('[OpenCode CLI] Sent Y to confirm batch termination');
+          log.info('[OpenCode CLI] Sent Y to confirm batch termination');
         }
       }, 100);
     }
@@ -403,12 +517,13 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
       return;
     }
 
-    console.log(`[OpenCode Adapter] Disposing adapter for task ${this.currentTaskId}`);
+    log.info(`[OpenCode Adapter] Disposing adapter for task ${this.currentTaskId}`);
     this.isDisposed = true;
+    this.browserFrameBuffer = '';
 
     if (this.logWatcher) {
       this.logWatcher.stop().catch((err) => {
-        console.warn('[OpenCode Adapter] Error stopping log watcher:', err);
+        log.warn(`[OpenCode Adapter] Error stopping log watcher: ${err}`);
       });
     }
 
@@ -416,7 +531,7 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
       try {
         this.ptyProcess.kill();
       } catch (error) {
-        console.error('[OpenCode Adapter] Error killing PTY process:', error);
+        log.error(`[OpenCode Adapter] Error killing PTY process: ${error}`);
       }
       this.ptyProcess = null;
     }
@@ -437,7 +552,7 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
     this.streamParser.reset();
     this.removeAllListeners();
 
-    console.log('[OpenCode Adapter] Adapter disposed');
+    log.info('[OpenCode Adapter] Adapter disposed');
   }
 
   private escapeShellArg(arg: string): string {
@@ -473,13 +588,13 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
     });
 
     this.streamParser.on('error', (error: Error) => {
-      console.warn('[OpenCode Adapter] Stream parse warning:', error.message);
+      log.warn(`[OpenCode Adapter] Stream parse warning: ${error.message}`);
       this.emit('debug', { type: 'parse-warning', message: error.message });
     });
   }
 
   private handleMessage(message: OpenCodeMessage): void {
-    console.log('[OpenCode Adapter] Handling message type:', message.type);
+    log.info(`[OpenCode Adapter] Handling message type: ${message.type}`);
 
     switch (message.type) {
       case 'step_start': {
@@ -563,9 +678,20 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
         this.emit('message', message);
         const toolUseStatus = toolUseMessage.part.state?.status;
 
-        console.log('[OpenCode Adapter] Tool use:', toolUseName, 'status:', toolUseStatus);
+        log.info(`[OpenCode Adapter] Tool use: ${toolUseName} status: ${toolUseStatus}`);
 
         if (toolUseStatus === 'completed' || toolUseStatus === 'error') {
+          if (
+            this.isRequestConnectorAuthTool(toolUseName) &&
+            toolUseOutput.includes(CONNECTOR_AUTH_REQUIRED_MARKER)
+          ) {
+            this.pauseForConnectorAuth(
+              toolUseInput as ConnectorAuthPauseInput,
+              toolUseMessage.part.sessionID,
+            );
+            break;
+          }
+
           this.emit('tool-result', toolUseOutput);
           this.emit('tool-call-complete', {
             toolName: toolUseName,
@@ -580,7 +706,7 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
 
       case 'tool_result': {
         const toolOutput = message.part.output || '';
-        console.log('[OpenCode Adapter] Tool result received, length:', toolOutput.length);
+        log.info(`[OpenCode Adapter] Tool result received, length: ${toolOutput.length}`);
         this.emit('tool-result', toolOutput);
         break;
       }
@@ -595,17 +721,18 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
         if (message.part.reason === 'error') {
           if (!this.hasCompleted) {
             this.hasCompleted = true;
+            const errorMessage = classifyProcessError(undefined, this.outputBuffer);
             this.emit('complete', {
               status: 'error',
               sessionId: this.currentSessionId || undefined,
-              error: 'Task failed',
+              error: errorMessage,
             });
           }
           break;
         }
 
         const action = this.completionEnforcer.handleStepFinish(message.part.reason);
-        console.log(`[OpenCode Adapter] step_finish action: ${action}`);
+        log.info(`[OpenCode Adapter] step_finish action: ${action}`);
 
         if (action === 'complete' && !this.hasCompleted) {
           this.hasCompleted = true;
@@ -628,13 +755,34 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
 
       default: {
         const unknownMessage = message as unknown as { type: string };
-        console.log('[OpenCode Adapter] Unknown message type:', unknownMessage.type);
+        log.info(`[OpenCode Adapter] Unknown message type: ${unknownMessage.type}`);
       }
     }
   }
 
   private handleToolCall(toolName: string, toolInput: unknown, sessionID?: string): void {
-    console.log('[OpenCode Adapter] Tool call:', toolName);
+    // Normalize rejected tool calls from local models (e.g. Ollama).
+    // opencode returns toolName='invalid'/'unknown' with { tool: 'complete_task' } in input.
+    // Detect and re-route to the canonical tool name so all bookkeeping runs correctly.
+    if (toolName === 'invalid' || toolName === 'unknown') {
+      const rejectedInput = toolInput as { tool?: string } | undefined;
+      const rejectedTool = rejectedInput?.tool?.trim();
+      if (
+        rejectedTool &&
+        rejectedTool !== toolName &&
+        rejectedTool !== 'invalid' &&
+        rejectedTool !== 'unknown'
+      ) {
+        this.handleToolCall(rejectedTool, toolInput, sessionID);
+        return;
+      }
+      // rejectedTool is absent or resolves to an invalid name — stop here.
+      this.emit('debug', {
+        type: 'warning',
+        message: `[OpenCode Adapter] Skipping unresolvable rejected tool call: toolName="${toolName}", rejectedTool="${rejectedTool}"`,
+      });
+      return;
+    }
 
     if (this.isStartTaskTool(toolName)) {
       this.startTaskCalled = true;
@@ -652,14 +800,12 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
           if (todos.length > 0) {
             this.emit('todo:update', todos);
             this.completionEnforcer.updateTodos(todos);
-            console.log('[OpenCode Adapter] Created todos from start_task steps');
           }
         }
       }
     }
 
     if (!this.startTaskCalled && !this.isExemptTool(toolName)) {
-      console.warn(`[OpenCode Adapter] Tool "${toolName}" called before start_task`);
       this.emit('debug', {
         type: 'warning',
         message: `Tool "${toolName}" called before start_task - plan may not be captured`,
@@ -675,6 +821,24 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
     }
 
     this.completionEnforcer.markToolsUsed(!this.isNonTaskContinuationTool(toolName));
+
+    // Intercept invalid tool calls where model tried to call complete_task but opencode rejected it.
+    // This happens with local models (e.g. Ollama) that don't support function calling natively —
+    // opencode returns toolName='invalid' with { tool: 'complete_task' } in the input, causing
+    // CompletionEnforcer to never detect completion and enter a "Retrying..." loop.
+    if (toolName === 'invalid' || toolName === 'unknown') {
+      const invalidInput = toolInput as { tool?: string; status?: string; summary?: string };
+      if (
+        invalidInput?.tool === 'complete_task' ||
+        (typeof invalidInput?.tool === 'string' && invalidInput.tool.endsWith('_complete_task'))
+      ) {
+        this.completionEnforcer.handleCompleteTaskDetection({
+          status: invalidInput.status ?? 'success',
+          summary: invalidInput.summary ?? 'Task completed.',
+        });
+        return;
+      }
+    }
 
     if (toolName === 'complete_task' || toolName.endsWith('_complete_task')) {
       this.completionEnforcer.handleCompleteTaskDetection(toolInput);
@@ -722,8 +886,8 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
   private handleProcessExit(code: number | null): void {
     this.ptyProcess = null;
 
-    if (this.wasInterrupted && code === 0 && !this.hasCompleted) {
-      console.log('[OpenCode CLI] Task was interrupted by user');
+    if (this.wasInterrupted && isNormalExit(code, this.options.platform) && !this.hasCompleted) {
+      log.info('[OpenCode CLI] Task was interrupted by user');
       this.hasCompleted = true;
       this.emit('complete', {
         status: 'interrupted',
@@ -733,9 +897,11 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
       return;
     }
 
-    if (code === 0 && !this.hasCompleted) {
-      this.completionEnforcer.handleProcessExit(code).catch((error) => {
-        console.error('[OpenCode Adapter] Completion enforcer error:', error);
+    if (isNormalExit(code, this.options.platform) && !this.hasCompleted) {
+      // Normalize Windows Ctrl+C exit code to 0 so the completion enforcer treats it as a clean exit
+      const normalizedCode = code === WINDOWS_CTRL_C_EXIT_CODE ? 0 : (code ?? 0);
+      this.completionEnforcer.handleProcessExit(normalizedCode).catch((error) => {
+        log.error(`[OpenCode Adapter] Completion enforcer error: ${error}`);
         this.hasCompleted = true;
         this.emit('complete', {
           status: 'error',
@@ -746,10 +912,10 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
       return;
     }
 
-    if (!this.hasCompleted) {
-      if (code !== null && code !== 0) {
-        this.emit('error', new Error(`OpenCode CLI exited with code ${code}`));
-      }
+    if (!this.hasCompleted && !isNormalExit(code, this.options.platform)) {
+      // Treat null (abnormal PTY termination) and non-zero non-normal codes as errors
+      const errorMessage = classifyProcessError(code ?? undefined, this.outputBuffer);
+      this.emit('error', new Error(errorMessage));
     }
 
     this.currentTaskId = null;
@@ -761,9 +927,10 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
       throw new Error('No session ID available for session resumption');
     }
 
-    console.log(`[OpenCode Adapter] Starting session resumption with session ${sessionId}`);
+    log.info(`[OpenCode Adapter] Starting session resumption with session ${sessionId}`);
 
     this.streamParser.reset();
+    this.outputBuffer = '';
 
     const config: TaskConfig = {
       prompt,
@@ -774,10 +941,8 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
     const cliArgs = await this.options.buildCliArgs(config);
 
     const { command, args: baseArgs } = this.options.getCliCommand();
-    console.log(
-      '[OpenCode Adapter] Session resumption command:',
-      command,
-      [...baseArgs, ...cliArgs].join(' '),
+    log.info(
+      `[OpenCode Adapter] Session resumption command: ${command} ${[...baseArgs, ...cliArgs].join(' ')}`,
     );
 
     const env = await this.options.buildEnvironment(this.currentTaskId || 'default');
@@ -812,14 +977,18 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
         .replace(/\x1B\][^\x07]*\x07/g, '')
         .replace(/\x1B\][^\x1B]*\x1B\\/g, '');
       /* eslint-enable no-control-regex */
-      if (cleanData.trim()) {
+      // Route through checkForBrowserFrame so continuation PTY frames are not dropped
+      const passthroughData = this.checkForBrowserFrame(cleanData);
+      if (passthroughData.trim()) {
         const truncated =
-          cleanData.substring(0, LOG_TRUNCATION_LIMIT) +
-          (cleanData.length > LOG_TRUNCATION_LIMIT ? '...' : '');
-        console.log('[OpenCode CLI stdout]:', truncated);
-        this.emit('debug', { type: 'stdout', message: cleanData });
+          passthroughData.substring(0, LOG_TRUNCATION_LIMIT) +
+          (passthroughData.length > LOG_TRUNCATION_LIMIT ? '...' : '');
+        log.info(`[OpenCode CLI stdout]: ${truncated}`);
+        this.emit('debug', { type: 'stdout', message: passthroughData });
 
-        this.streamParser.feed(cleanData);
+        this.appendToOutputBuffer(passthroughData);
+
+        this.streamParser.feed(passthroughData);
       }
     });
 
@@ -854,6 +1023,10 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
     return false;
   }
 
+  private isRequestConnectorAuthTool(toolName: string): boolean {
+    return toolName === 'request_connector_auth' || toolName.endsWith('_request_connector_auth');
+  }
+
   private isNonTaskContinuationTool(toolName: string): boolean {
     return isNonTaskContinuationToolName(toolName);
   }
@@ -879,7 +1052,94 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
     } as import('../../common/types/opencode.js').OpenCodeTextMessage;
 
     this.emit('message', syntheticMessage);
-    console.log('[OpenCode Adapter] Emitted synthetic plan message');
+    log.info('[OpenCode Adapter] Emitted synthetic plan message');
+  }
+
+  private pauseForConnectorAuth(input: ConnectorAuthPauseInput, sessionId?: string): void {
+    if (this.hasCompleted) {
+      return;
+    }
+
+    if (!this.currentSessionId && sessionId) {
+      this.currentSessionId = sessionId;
+    }
+
+    if (!input.providerId) {
+      this.hasCompleted = true;
+      this.emit('complete', {
+        status: 'error',
+        sessionId: this.currentSessionId || undefined,
+        error:
+          'The agent requested connector authentication without specifying which connector to authenticate.',
+      });
+      return;
+    }
+
+    if (!isOAuthProviderId(input.providerId)) {
+      this.hasCompleted = true;
+      this.emit('complete', {
+        status: 'error',
+        sessionId: this.currentSessionId || undefined,
+        error: `The agent requested connector authentication for an unsupported connector provider: ${input.providerId}.`,
+      });
+      return;
+    }
+
+    const providerId = input.providerId;
+    const providerName = getOAuthProviderDisplayName(providerId);
+    const pauseMessage =
+      input.message?.trim() ||
+      `I need ${providerName} connected to continue. Click Authenticate ${providerName}.`;
+
+    log.info('[OpenCode Adapter] Pausing for connector auth', {
+      providerId,
+      hasCustomMessage: Boolean(input.message?.trim()),
+    });
+
+    if (this.waitingTransitionTimer) {
+      clearTimeout(this.waitingTransitionTimer);
+      this.waitingTransitionTimer = null;
+    }
+
+    const effectiveSessionId = this.currentSessionId || sessionId || '';
+
+    // Emit a synthetic text message so the user sees the pause reason
+    const syntheticMessage: OpenCodeMessage = {
+      type: 'text',
+      timestamp: Date.now(),
+      sessionID: effectiveSessionId,
+      part: {
+        id: this.generateMessageId(),
+        sessionID: effectiveSessionId,
+        messageID: this.generateMessageId(),
+        type: 'text',
+        text: pauseMessage,
+      },
+    } as import('../../common/types/opencode.js').OpenCodeTextMessage;
+    this.emit('message', syntheticMessage);
+
+    this.hasCompleted = true;
+    this.emit('complete', {
+      status: 'success',
+      sessionId: this.currentSessionId || undefined,
+      pauseReason: 'auth',
+      pauseAction: {
+        type: 'oauth-connect',
+        providerId,
+        label: input.label?.trim() || `Authenticate ${providerName}`,
+        pendingLabel: input.pendingLabel?.trim() || `Authenticating ${providerName}...`,
+        successText: input.successText?.trim() || `${providerName} is connected.`,
+      },
+    });
+
+    if (this.ptyProcess) {
+      try {
+        this.ptyProcess.kill();
+      } catch (error) {
+        log.warn(`[OpenCode Adapter] Error killing PTY during connector auth pause: ${error}`);
+      }
+      this.ptyProcess = null;
+    }
   }
 
   private buildPtySpawnArgs(command: string, args: string[]): { file: string; args: string[] } {
@@ -888,14 +1148,12 @@ export class OpenCodeAdapter extends EventEmitter<OpenCodeAdapterEvents> {
         throw new Error(`Windows CLI command must resolve to an .exe path. Received: ${command}`);
       }
 
-      // Route through cmd.exe /s /c with proper inner quoting so that
-      // installation paths containing spaces (e.g. "C:\Users\My Name\...")
-      // are handled correctly in both ConPTY and WinPTY fallback modes.
-      // Passing the raw .exe path directly to pty.spawn works for ConPTY
-      // but fails in WinPTY where the unquoted path is split at every space.
+      // On Windows, spawn the opencode .exe directly in node-pty without a shell wrapper.
+      // Passing args as an array avoids all cmd.exe / PowerShell quoting issues:
+      // the OS hands each element to the process as a raw argv entry regardless
+      // of what characters it contains (double-quotes, %, ^, &, newlines, etc.).
       // See: https://github.com/accomplish-ai/accomplish/issues/596
-      const fullCommand = this.buildShellCommand(command, args);
-      return { file: 'cmd.exe', args: ['/s', '/c', `"${fullCommand}"`] };
+      return { file: command, args };
     }
 
     const shell =

@@ -1,5 +1,7 @@
 import type { ZaiRegion } from './providerSettings.js';
 
+export const MINIMAX_DEFAULT_BASE_URL = 'https://api.minimax.io/v1';
+
 export const ZAI_ENDPOINTS: Record<ZaiRegion, string> = {
   china: 'https://open.bigmodel.cn/api/paas/v4',
   international: 'https://api.z.ai/api/coding/paas/v4',
@@ -26,7 +28,8 @@ export type ProviderType =
   | 'together'
   | 'fireworks'
   | 'groq'
-  | 'venice';
+  | 'venice'
+  | 'nim';
 
 export type ApiKeyProvider =
   | 'anthropic'
@@ -49,7 +52,11 @@ export type ApiKeyProvider =
   | 'fireworks'
   | 'groq'
   | 'venice'
-  | 'elevenlabs';
+  | 'nim'
+  | 'elevenlabs'
+  | 'aws-agentcore'
+  | 'browserbase'
+  | 'steel';
 
 /**
  * Providers that accept API key storage via the setApiKey IPC handler.
@@ -77,7 +84,11 @@ export const ALLOWED_API_KEY_PROVIDERS: ReadonlySet<string> = new Set<string>([
   'fireworks',
   'groq',
   'venice',
+  'nim',
   'elevenlabs',
+  'aws-agentcore',
+  'browserbase',
+  'steel',
 ]);
 
 /**
@@ -128,6 +139,8 @@ export interface ProviderConfig {
   defaultModelId?: string;
   /** Config for dynamically fetching models from the provider API */
   modelsEndpoint?: ModelsEndpointConfig;
+  /** Whether the user can customize the base URL for this provider */
+  editableBaseUrl?: boolean;
 }
 
 export interface ModelConfig {
@@ -328,7 +341,8 @@ export const DEFAULT_PROVIDERS: ProviderConfig[] = [
     name: 'MiniMax',
     requiresApiKey: true,
     apiKeyEnvVar: 'MINIMAX_API_KEY',
-    baseUrl: 'https://api.minimax.io',
+    baseUrl: MINIMAX_DEFAULT_BASE_URL,
+    editableBaseUrl: true,
     defaultModelId: 'minimax/MiniMax-M2.5',
     models: [
       {
@@ -449,6 +463,22 @@ export const DEFAULT_PROVIDERS: ProviderConfig[] = [
     models: [],
   },
 ];
+
+export const NIM_DEFAULT_BASE_URL = 'https://integrate.api.nvidia.com/v1';
+
+export interface NimModel {
+  id: string;
+  name: string;
+  provider: string;
+  contextLength: number;
+}
+
+export interface NimConfig {
+  baseUrl: string;
+  enabled: boolean;
+  lastValidated?: number;
+  models?: NimModel[];
+}
 
 export const DEFAULT_MODEL: SelectedModel = {
   provider: 'anthropic',

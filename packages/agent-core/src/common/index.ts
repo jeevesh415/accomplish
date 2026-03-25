@@ -41,6 +41,8 @@ export type {
   LiteLLMModel,
   LiteLLMConfig,
   LMStudioConfig,
+  NimModel,
+  NimConfig,
 } from './types/provider.js';
 export {
   DEFAULT_PROVIDERS,
@@ -48,6 +50,8 @@ export {
   ALLOWED_API_KEY_PROVIDERS,
   STANDARD_VALIDATION_PROVIDERS,
   ZAI_ENDPOINTS,
+  MINIMAX_DEFAULT_BASE_URL,
+  NIM_DEFAULT_BASE_URL,
 } from './types/provider.js';
 
 // Provider settings types
@@ -68,6 +72,7 @@ export type {
   AzureFoundryCredentials,
   OAuthCredentials,
   CustomCredentials,
+  NimCredentials,
   ProviderCredentials,
   ToolSupportStatus,
   ConnectedProvider,
@@ -110,6 +115,14 @@ export type {
 // Skills types
 export type { SkillSource, Skill, SkillFrontmatter } from './types/skills.js';
 
+// Connector types
+export {
+  OAuthProviderId,
+  getOAuthProviderDisplayName,
+  isOAuthProviderId,
+} from './types/connector.js';
+export type { ConnectorStatus, OAuthTokens, McpConnector } from './types/connector.js';
+
 // Workspace types
 export type { Workspace, WorkspaceCreateInput, WorkspaceUpdateInput } from './types/workspace.js';
 
@@ -126,6 +139,7 @@ export {
   PERMISSION_API_PORT,
   QUESTION_API_PORT,
   PERMISSION_REQUEST_TIMEOUT_MS,
+  CONNECTOR_AUTH_REQUIRED_MARKER,
   LOG_MAX_FILE_SIZE_BYTES,
   LOG_RETENTION_DAYS,
   LOG_BUFFER_FLUSH_INTERVAL_MS,

@@ -14,6 +14,7 @@ import {
   LMStudioProviderForm,
   VertexProviderForm,
   CustomProviderForm,
+  NimProviderForm,
 } from './providers';
 import { ZaiProviderForm } from './providers/ZaiProviderForm';
 import { settingsVariants, settingsTransitions } from '@/lib/animations';
@@ -22,6 +23,7 @@ interface ProviderSettingsPanelProps {
   providerId: ProviderId;
   connectedProvider?: ConnectedProvider;
   onConnect: (provider: ConnectedProvider) => void;
+  onUpdateProvider?: (provider: ConnectedProvider) => void;
   onDisconnect: () => void;
   onModelChange: (modelId: string) => void;
   showModelError: boolean;
@@ -31,6 +33,7 @@ export function ProviderSettingsPanel({
   providerId,
   connectedProvider,
   onConnect,
+  onUpdateProvider,
   onDisconnect,
   onModelChange,
   showModelError,
@@ -40,6 +43,19 @@ export function ProviderSettingsPanel({
 
   // Render form content based on provider category
   const renderForm = () => {
+    // Handle NVIDIA NIM separately (has custom endpoint + API key)
+    if (providerId === 'nim') {
+      return (
+        <NimProviderForm
+          connectedProvider={connectedProvider}
+          onConnect={onConnect}
+          onDisconnect={onDisconnect}
+          onModelChange={onModelChange}
+          showModelError={showModelError}
+        />
+      );
+    }
+
     // Handle Z.AI separately (has region selector)
     if (providerId === 'zai') {
       return (
@@ -107,6 +123,7 @@ export function ProviderSettingsPanel({
             <LMStudioProviderForm
               connectedProvider={connectedProvider}
               onConnect={onConnect}
+              onUpdateProvider={onUpdateProvider}
               onDisconnect={onDisconnect}
               onModelChange={onModelChange}
               showModelError={showModelError}
@@ -118,6 +135,7 @@ export function ProviderSettingsPanel({
           <OllamaProviderForm
             connectedProvider={connectedProvider}
             onConnect={onConnect}
+            onUpdateProvider={onUpdateProvider}
             onDisconnect={onDisconnect}
             onModelChange={onModelChange}
             showModelError={showModelError}
