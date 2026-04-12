@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
 import { RateLimiter } from './rate-limiter.js';
+import { log } from './logger.js';
 
 const MAX_BODY_SIZE = 1024 * 1024; // 1 MB
 
@@ -19,6 +20,8 @@ export interface HttpServerOptions {
   rateLimiter: RateLimiter;
   routes: Route[];
   serviceName: string;
+  /** Fixed port to listen on. If 0 or omitted, the OS assigns a random port. */
+  port?: number;
 }
 
 function validateAuthToken(
@@ -69,7 +72,7 @@ function parseJsonBody(body: string, res: http.ServerResponse): Record<string, u
 export function createHttpServer(
   options: HttpServerOptions,
 ): Promise<{ server: http.Server; port: number }> {
-  const { authToken, rateLimiter, routes, serviceName } = options;
+  const { authToken, rateLimiter, routes, serviceName, port: requestedPort } = options;
 
   return new Promise((resolve, reject) => {
     const server = http.createServer(async (req, res) => {
@@ -114,19 +117,30 @@ export function createHttpServer(
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Internal server error' }));
         }
-        console.error(`[${serviceName}] Unhandled error in ${route.method} ${route.path}:`, error);
+        log.error(`[${serviceName}] Unhandled error in ${route.method} ${route.path}:`, error);
       }
     });
 
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(requestedPort ?? 0, '127.0.0.1', () => {
       const addr = server.address();
       const port = addr && typeof addr === 'object' ? addr.port : 0;
-      console.log(`[${serviceName}] Listening on port ${port}`);
+      log.info(`[${serviceName}] Listening on port ${port}`);
       resolve({ server, port });
     });
 
     server.on('error', (error: NodeJS.ErrnoException) => {
-      reject(new Error(`[${serviceName}] Failed to start: ${error.message}`));
+      if (error.code === 'EADDRINUSE' && requestedPort) {
+        // Port already in use — fall back to OS-assigned port
+        log.warn(`[${serviceName}] Port ${requestedPort} in use, falling back to random port`);
+        server.listen(0, '127.0.0.1', () => {
+          const addr = server.address();
+          const port = addr && typeof addr === 'object' ? addr.port : 0;
+          log.info(`[${serviceName}] Listening on fallback port ${port}`);
+          resolve({ server, port });
+        });
+      } else {
+        reject(new Error(`[${serviceName}] Failed to start: ${error.message}`));
+      }
     });
   });
 }

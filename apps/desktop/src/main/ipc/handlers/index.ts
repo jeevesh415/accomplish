@@ -9,6 +9,8 @@ import { registerSkillsHandlers } from './skills-handlers';
 import { registerFavoritesHandlers } from './favorites-handlers';
 import { registerConnectorHandlers } from './connector-handlers';
 import { registerWorkspaceHandlers } from './workspace-handlers';
+import { registerHuggingFaceHandlers } from './huggingface-handlers';
+import { registerAnalyticsHandlers } from './analytics-handlers';
 
 export function registerIPCHandlers(): void {
   registerTaskHandlers();
@@ -22,4 +24,6 @@ export function registerIPCHandlers(): void {
   registerFavoritesHandlers();
   registerConnectorHandlers();
   registerWorkspaceHandlers();
+  registerHuggingFaceHandlers();
+  registerAnalyticsHandlers();
 }

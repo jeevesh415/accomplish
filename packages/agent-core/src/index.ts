@@ -107,18 +107,22 @@ export { OpenCodeCliNotFoundError } from './internal/classes/OpenCodeAdapter.js'
 
 // Low-level OpenCode utilities for advanced integrations
 export { resolveCliPath, isCliAvailable } from './opencode/cli-resolver.js';
-export {
-  generateConfig,
-  buildCliArgs,
-  ACCOMPLISH_AGENT_NAME,
-} from './opencode/config-generator.js';
+export { generateConfig, ACCOMPLISH_AGENT_NAME } from './opencode/config-generator.js';
+export { buildCliArgs } from './opencode/cli-args.js';
+export type { BuildCliArgsOptions } from './opencode/cli-args.js';
 
-export type { BrowserConfig } from './opencode/config-generator.js';
+export type { BrowserConfig } from './opencode/generator-mcp.js';
 
 export { buildOpenCodeEnvironment } from './opencode/environment.js';
 export type { EnvironmentConfig } from './opencode/environment.js';
 
 export { buildProviderConfigs, syncApiKeysToOpenCodeAuth } from './opencode/config-builder.js';
+
+export { resolveTaskConfig } from './opencode/resolve-task-config.js';
+export type {
+  ResolveTaskConfigOptions,
+  ResolvedTaskConfig,
+} from './opencode/resolve-task-config.js';
 
 export {
   getOpenCodeAuthPath,
@@ -145,6 +149,15 @@ export { sanitizeAssistantTextForDisplay } from './opencode/message-processor.js
 // Proxy lifecycle is now internal to TaskManager.dispose()
 
 export { getAzureEntraToken } from './opencode/proxies/index.js';
+
+// Accomplish AI runtime adapter
+export { noopRuntime } from './opencode/accomplish-runtime.js';
+export type {
+  AccomplishRuntime,
+  AccomplishConnectResult,
+  StorageDeps,
+} from './opencode/accomplish-runtime.js';
+
 // -----------------------------------------------------------------------------
 // Storage Module (from ./storage/)
 // -----------------------------------------------------------------------------
@@ -172,6 +185,18 @@ export {
   getActiveWorkspaceId,
   setActiveWorkspaceId,
 } from './storage/repositories/workspaces.js';
+
+// Knowledge Notes repository
+export {
+  listKnowledgeNotes,
+  getKnowledgeNote,
+  createKnowledgeNote,
+  updateKnowledgeNote,
+  deleteKnowledgeNote,
+  getKnowledgeNotesForPrompt,
+} from './storage/repositories/knowledgeNotes.js';
+
+export { getEnabledSkills } from './storage/repositories/skills.js';
 
 // -----------------------------------------------------------------------------
 // Providers Module (from ./providers/)
@@ -205,6 +230,21 @@ export { fetchProviderModels } from './providers/fetch-models.js';
 export type { FetchProviderModelsResult } from './providers/fetch-models.js';
 
 export { testCustomConnection } from './providers/custom.js';
+
+export {
+  getCopilotOAuthStatus,
+  setCopilotOAuthTokens,
+  clearCopilotOAuth,
+  requestCopilotDeviceCode,
+  pollCopilotDeviceToken,
+  GITHUB_COPILOT_OAUTH_CLIENT_ID,
+  GITHUB_COPILOT_AUTH_URL,
+} from './providers/copilot.js';
+export type {
+  CopilotOAuthStatus,
+  CopilotDeviceCodeResponse,
+  CopilotTokenResponse,
+} from './providers/copilot.js';
 
 // -----------------------------------------------------------------------------
 // Utils Module (from ./utils/)
@@ -310,6 +350,8 @@ export type {
   LiteLLMModel,
   LiteLLMConfig,
   LMStudioConfig,
+  HuggingFaceLocalModelInfo,
+  HuggingFaceLocalConfig,
   NimModel,
   NimConfig,
 } from './common/types/provider.js';
@@ -319,6 +361,7 @@ export {
   ALLOWED_API_KEY_PROVIDERS,
   STANDARD_VALIDATION_PROVIDERS,
   ZAI_ENDPOINTS,
+  COPILOT_MODELS,
 } from './common/types/provider.js';
 
 // Provider settings types
@@ -338,6 +381,8 @@ export type {
   LMStudioCredentials,
   AzureFoundryCredentials,
   OAuthCredentials,
+  CopilotOAuthCredentials,
+  AccomplishAiCredentials,
   CustomCredentials,
   NimCredentials,
   ProviderCredentials,
@@ -345,6 +390,7 @@ export type {
   ConnectedProvider,
   ProviderSettings,
 } from './common/types/providerSettings.js';
+export type { CreditUsage } from './common/types/gateway.js';
 export {
   PROVIDER_META,
   DEFAULT_MODELS,
@@ -387,6 +433,10 @@ export type {
   Workspace,
   WorkspaceCreateInput,
   WorkspaceUpdateInput,
+  KnowledgeNote,
+  KnowledgeNoteType,
+  KnowledgeNoteCreateInput,
+  KnowledgeNoteUpdateInput,
 } from './common/types/workspace.js';
 
 // Connector types
@@ -442,6 +492,7 @@ export {
   THOUGHT_STREAM_PORT,
   PERMISSION_API_PORT,
   QUESTION_API_PORT,
+  WHATSAPP_API_PORT,
   PERMISSION_REQUEST_TIMEOUT_MS,
   CONNECTOR_AUTH_REQUIRED_MARKER,
   LOG_MAX_FILE_SIZE_BYTES,
@@ -485,15 +536,6 @@ export {
 
 export { DaemonServer, DaemonClient, createInProcessTransportPair } from './daemon/index.js';
 export { createChildProcessTransport, createParentProcessTransport } from './daemon/index.js';
-export {
-  addScheduledTask,
-  listScheduledTasks,
-  cancelScheduledTask,
-  onScheduledTaskFire,
-  disposeScheduler,
-  parseCronField,
-  matchesCron,
-} from './daemon/index.js';
 export type { DaemonServerOptions, DaemonClientOptions } from './daemon/index.js';
 
 // Socket-based RPC server for the standalone daemon process
@@ -502,9 +544,12 @@ export type { DaemonRpcServerOptions } from './daemon/index.js';
 
 // Socket path, PID lock, and crash handler utilities for the daemon process
 export { getSocketPath, getPidFilePath, getDaemonDir } from './daemon/index.js';
+
+export { createSocketTransport } from './daemon/index.js';
+export type { SocketTransportOptions } from './daemon/index.js';
 export { acquirePidLock, PidLockError } from './daemon/index.js';
 export type { PidLockHandle, PidLockPayload } from './daemon/index.js';
-export { installCrashHandlers } from './daemon/index.js';
+export { installCrashHandlers, logger } from './daemon/index.js';
 
 // Daemon protocol types (re-exported from common/types/daemon.ts)
 export { JSON_RPC_ERRORS } from './common/types/daemon.js';
@@ -523,10 +568,11 @@ export type {
   TypedJsonRpcRequest,
   TypedJsonRpcResponse,
   TypedJsonRpcNotification,
+  HealthCheckResult,
+  WhatsAppDaemonConfig,
   ScheduledTask,
   TaskScheduleParams,
   TaskCancelScheduledParams,
-  HealthCheckResult,
 } from './common/types/daemon.js';
 
 // Browser live-view types (ENG-695)

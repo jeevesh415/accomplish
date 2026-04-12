@@ -50,6 +50,8 @@ export const MODEL_DISPLAY_NAMES: Record<string, string> = {
   'MiniMax-M2.1-highspeed': 'MiniMax M2.1 Highspeed',
   'MiniMax-M2.5': 'MiniMax M2.5',
   'MiniMax-M2.5-highspeed': 'MiniMax M2.5 Highspeed',
+  // Accomplish AI
+  'accomplish-free': 'Accomplish',
 };
 
 export const PROVIDER_PREFIXES = [
@@ -67,6 +69,7 @@ export const PROVIDER_PREFIXES = [
   'zai-coding-plan/',
   'minimax/',
   'lmstudio/',
+  'huggingface-local/',
   'azure-foundry/',
   'vertex/',
   'nebius/',
@@ -75,6 +78,7 @@ export const PROVIDER_PREFIXES = [
   'groq/',
   'venice/',
   'custom/',
+  'accomplish-ai/',
 ];
 
 /**

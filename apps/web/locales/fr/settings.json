@@ -58,7 +58,19 @@
     "nebius": "Nebius AI",
     "together": "Together AI",
     "fireworks": "Fireworks AI",
-    "groq": "Groq"
+    "groq": "Groq",
+    "huggingface-local": "HuggingFace Local",
+    "accomplish-ai": "Accomplish AI",
+    "accomplishAi": {
+      "description": "Utilisez le modèle intégré propulsé par Accomplish - aucune clé API requise.\nInclut 200 crédits gratuits par mois pour commencer.",
+      "disconnect": "Déconnecter",
+      "exhaustedMessage": "Crédits épuisés. Ils seront réinitialisés le {{date}}.",
+      "exhaustedMessageSoon": "Crédits épuisés. Ils seront réinitialisés bientôt."
+    },
+    "venice": "Venice AI",
+    "nim": "NVIDIA NIM",
+    "custom": "Point d'accès personnalisé",
+    "copilot": "GitHub Copilot"
   },
   "providerLabels": {
     "anthropic": "Modèles Claude",
@@ -79,7 +91,13 @@
     "nebius": "Modèles Llama et DeepSeek",
     "together": "Modèles Llama et Mixtral",
     "fireworks": "Modèles d'inférence rapide",
-    "groq": "Modèles Llama ultra-rapides"
+    "groq": "Modèles Llama ultra-rapides",
+    "huggingface-local": "Inférence locale",
+    "accomplish-ai": "Offre gratuite",
+    "venice": "Service",
+    "nim": "Modèles hébergés NVIDIA",
+    "custom": "Personnalisé",
+    "copilot": "Modèles Copilot"
   },
   "status": {
     "connected": "Connecté",
@@ -254,12 +272,86 @@
     "about": "À propos",
     "browsers": "Navigateurs cloud",
     "general": "Général",
-    "daemon": "Démon"
+    "integrations": "Intégrations",
+    "scheduler": "Scheduler"
   },
   "notifications": {
     "toggle": {
       "label": "Notifications de bureau",
       "description": "Afficher les notifications du système lorsque les tâches se terminent en arrière-plan."
+    }
+  },
+  "daemon": {
+    "title": "Background Daemon",
+    "status": {
+      "running": "Running",
+      "stopped": "Stopped",
+      "reconnecting": "Reconnecting...",
+      "unknown": "Unknown",
+      "uptime": "Uptime: {{uptime}}",
+      "lastPing": "Last ping: {{seconds}}s ago",
+      "starting": "Starting...",
+      "stopping": "Stopping...",
+      "failed": "Failed",
+      "failedMessage": "The daemon could not start or reconnect. Try restarting manually."
+    },
+    "controls": {
+      "restart": "Restart",
+      "restarting": "Restarting...",
+      "stop": "Stop",
+      "stopping": "Stopping...",
+      "start": "Start Daemon",
+      "starting": "Starting..."
+    },
+    "closeBehavior": {
+      "label": "Window Close Behavior",
+      "keepDescription": "Closing the window hides it to the system tray. The daemon keeps running and tasks continue in the background.",
+      "stopDescription": "Closing the window stops the daemon and quits the app. Running tasks will be terminated.",
+      "warning": "Background features (external integrations) will not work when the window is closed."
+    },
+    "warningDialog": {
+      "title": "Disable Background Mode?",
+      "description": "This will terminate any running tasks when you close the window. Background features like external integrations will stop working.",
+      "cancel": "Cancel",
+      "continue": "Continue"
+    },
+    "confirmDialog": {
+      "title": "Are you sure?",
+      "description": "Tasks in progress will be lost when you close the window. This is not recommended for most users.",
+      "cancel": "Cancel",
+      "confirm": "Confirm"
+    },
+    "socket": {
+      "title": "Daemon Socket",
+      "description": "External clients (CLI tools, integrations) can send tasks via the local daemon socket using JSON-RPC 2.0.",
+      "pathLabel": "Socket Path",
+      "pathUnavailable": "Socket path unavailable.",
+      "copy": "Copy"
+    }
+  },
+  "integrations": {
+    "title": "Intégrations de messagerie",
+    "description": "Connectez des plateformes de messagerie pour déclencher des tâches Accomplish à distance. Une fois activé, vous pouvez démarrer et surveiller des tâches depuis votre téléphone ou n'importe quel appareil.",
+    "enabled": "Activé",
+    "messaging": "Messagerie",
+    "comingSoon": "Bientôt disponible",
+    "enable": "Activer {{name}}",
+    "enableDescription": "Autoriser la réception et l'envoi de messages",
+    "disconnect": "Déconnecter {{name}}",
+    "connectedAs": "Connecté en tant que {{name}}",
+    "remoteAccess": "Activer l'accès à distance",
+    "remoteAccessDescription": "Ouvrir un tunnel sécurisé pour que les messages puissent atteindre cette machine de n'importe où",
+    "platforms": {
+      "whatsapp": "Déclencher des tâches et recevoir des mises à jour via WhatsApp",
+      "slack": "Connecter un espace de travail Slack pour la gestion des tâches",
+      "telegram": "Utiliser le bot Telegram pour interagir avec Accomplish",
+      "teams": "Intégrer avec les canaux et chats Teams"
+    },
+    "whatsapp": {
+      "connect": "Connecter WhatsApp",
+      "scanQr": "Scannez le QR code ci-dessous avec votre application WhatsApp pour connecter cet appareil. Allez dans WhatsApp > Paramètres > Appareils liés > Lier un appareil.",
+      "qrPlaceholder": "Le QR code apparaîtra ici lorsque le service WhatsApp démarrera",
+      "securityNotice": "En connectant WhatsApp, vous accordez à Accomplish l'accès à vos messages WhatsApp. Toutes les données restent sur votre appareil et ne sont pas partagées à l'extérieur."
     }
   },
   "appearance": {
@@ -276,6 +368,7 @@
     "themeDark": "Sombre"
   },
   "connectors": {
+    "title": "Connecteurs",
     "description": "Connectez des serveurs MCP distants via OAuth. Seuls les serveurs prenant en charge le flux d'autorisation OAuth 2.0 sont actuellement pris en charge.",
     "loading": "Chargement des connecteurs...",
     "placeholder": "https://serveur-mcp.exemple.com",
@@ -435,16 +528,69 @@
     "secureStorage": "Votre clé API est stockée en toute sécurité dans le trousseau de votre système.",
     "howToUse": "Comment utiliser :",
     "clickMicButton": "Cliquez sur le bouton microphone",
-    "holdAltKey": "Maintenez la touche Alt",
+    "holdAltKey": "Maintenez la touche {{modifierKey}}",
     "tooltipSetup": "Cliquez pour configurer la saisie vocale",
     "tooltipRecording": "Enregistrement ({{duration}}) - Cliquez pour arrêter",
     "tooltipTranscribing": "Transcription...",
     "tooltipError": "Erreur lors de la transcription - Cliquez pour réessayer",
-    "tooltipDefault": "Cliquez pour enregistrer ou maintenez Alt pour enregistrer la saisie vocale",
+    "tooltipDefault": "Cliquez pour enregistrer ou maintenez {{modifierKey}} pour enregistrer la saisie vocale",
     "processing": "Traitement..."
   },
   "baseUrl": {
     "title": "URL de base",
     "description": "Laissez vide pour utiliser l'URL par défaut."
+  },
+  "huggingfaceLocal": {
+    "serverUrl": "URL du serveur HuggingFace Local",
+    "serverHint": "Exécutez un serveur d'inférence local HuggingFace Transformers.js avec ONNX Runtime",
+    "selectModel": "Veuillez sélectionner un modèle",
+    "selectModelPlaceholder": "Sélectionner un modèle...",
+    "infoBannerTitle": "Inférence locale avec Transformers.js",
+    "infoBannerDescription": "Les modèles s'exécutent localement avec ONNX Runtime. Les modèles quantifiés plus petits (Q4) sont recommandés pour une inférence plus rapide."
+  },
+  "scheduler": {
+    "title": "Scheduled Tasks",
+    "description": "Automate recurring tasks with cron expressions. Schedules persist across daemon restarts.",
+    "empty": "No scheduled tasks. Create one to automate recurring work.",
+    "addButton": "Add Schedule",
+    "autoStartWarning": "Enable 'Start at Login' in Settings → General to ensure schedules fire after system restart.",
+    "card": {
+      "lastRun": "Last run",
+      "nextRun": "Next run",
+      "never": "Never",
+      "delete": "Delete",
+      "deleteConfirm": "Delete this scheduled task?"
+    },
+    "addDialog": {
+      "title": "New Scheduled Task",
+      "cronLabel": "Cron Expression",
+      "cronPlaceholder": "0 9 * * 1-5",
+      "cronHelp": "5-field format: minute hour day-of-month month day-of-week. Examples: '0 9 * * *' (daily at 9am), '0 9 * * 1-5' (weekdays at 9am), '*/30 * * * *' (every 30 min)",
+      "promptLabel": "Task Prompt",
+      "promptPlaceholder": "Check email and summarize important items",
+      "create": "Create Schedule",
+      "cancel": "Cancel"
+    }
+  },
+  "knowledgeNotes": {
+    "title": "Notes de contexte",
+    "description": "Contexte persistant injecté dans chaque tâche de cet espace de travail",
+    "addNote": "Ajouter une note",
+    "placeholder": "Ajouter du contexte, des instructions ou des références...",
+    "types": {
+      "context": "Contexte",
+      "instruction": "Instruction",
+      "reference": "Référence"
+    },
+    "labels": {
+      "type": "Type de note",
+      "content": "Contenu de la note"
+    },
+    "errors": {
+      "updateFailed": "Note introuvable ou impossible à mettre à jour.",
+      "deleteFailed": "Note introuvable ou impossible à supprimer."
+    },
+    "empty": "Aucune note de contexte. Ajoutez des notes pour donner à votre IA un contexte persistant.",
+    "maxNotes": "Maximum {{max}} notes par espace de travail"
   }
 }

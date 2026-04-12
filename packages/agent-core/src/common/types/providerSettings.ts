@@ -14,15 +14,26 @@ export type ProviderId =
   | 'minimax'
   | 'lmstudio'
   | 'vertex'
+  | 'huggingface-local'
   | 'nebius'
   | 'together'
   | 'fireworks'
   | 'groq'
   | 'venice'
   | 'nim'
-  | 'custom';
+  | 'custom'
+  | 'copilot'
+  | 'accomplish-ai';
 
-export type ProviderCategory = 'classic' | 'aws' | 'gcp' | 'azure' | 'local' | 'proxy' | 'hybrid';
+export type ProviderCategory =
+  | 'classic'
+  | 'aws'
+  | 'gcp'
+  | 'azure'
+  | 'local'
+  | 'proxy'
+  | 'hybrid'
+  | 'accomplish';
 
 export interface ProviderMeta {
   id: ProviderId;
@@ -137,6 +148,13 @@ export const PROVIDER_META: Record<ProviderId, ProviderMeta> = {
     logoKey: 'lmstudio',
     helpUrl: 'https://lmstudio.ai/',
   },
+  'huggingface-local': {
+    id: 'huggingface-local',
+    name: 'HuggingFace Local',
+    category: 'local',
+    label: 'Local Models',
+    logoKey: 'huggingface',
+  },
   nebius: {
     id: 'nebius',
     name: 'Nebius AI',
@@ -192,6 +210,21 @@ export const PROVIDER_META: Record<ProviderId, ProviderMeta> = {
     label: 'Custom',
     logoKey: 'custom',
   },
+  copilot: {
+    id: 'copilot',
+    name: 'GitHub Copilot',
+    category: 'classic',
+    label: 'Service',
+    logoKey: 'github-copilot',
+    helpUrl: 'https://github.com/settings/copilot',
+  },
+  'accomplish-ai': {
+    id: 'accomplish-ai',
+    name: 'Accomplish AI',
+    category: 'accomplish',
+    label: 'Free Tier',
+    logoKey: 'accomplish',
+  },
 };
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -240,6 +273,11 @@ export interface LMStudioCredentials {
   serverUrl: string;
 }
 
+export interface HuggingFaceLocalCredentials {
+  type: 'huggingface-local';
+  modelId: string;
+}
+
 export interface CustomCredentials {
   type: 'custom';
   baseUrl: string;
@@ -275,6 +313,15 @@ export interface OAuthCredentials {
   oauthProvider: 'chatgpt';
 }
 
+export interface CopilotOAuthCredentials {
+  type: 'copilot-oauth';
+}
+
+export interface AccomplishAiCredentials {
+  type: 'accomplish-ai';
+  deviceFingerprint: string;
+}
+
 export type ProviderCredentials =
   | ApiKeyCredentials
   | BedrockProviderCredentials
@@ -286,6 +333,9 @@ export type ProviderCredentials =
   | AzureFoundryCredentials
   | LMStudioCredentials
   | OAuthCredentials
+  | HuggingFaceLocalCredentials
+  | CopilotOAuthCredentials
+  | AccomplishAiCredentials
   | CustomCredentials
   | NimCredentials;
 
@@ -346,6 +396,8 @@ export const DEFAULT_MODELS: Partial<Record<ProviderId, string>> = {
   groq: 'groq/llama3-70b-8192',
   venice: 'venice/llama-3.3-70b',
   nim: 'nim/meta/llama-3.1-70b-instruct',
+  copilot: 'copilot/gpt-4o',
+  'accomplish-ai': 'accomplish-ai/accomplish-free',
 };
 
 export function getDefaultModelForProvider(providerId: ProviderId): string | null {
@@ -372,6 +424,8 @@ export const PROVIDER_ID_TO_OPENCODE: Record<ProviderId, string> = {
   minimax: 'minimax',
   lmstudio: 'lmstudio',
   vertex: 'vertex',
+  // HuggingFace Local exposes an OpenAI-compatible API; opencode connects via OPENAI_API_BASE env var
+  'huggingface-local': 'openai',
   nebius: 'nebius',
   together: 'together',
   fireworks: 'fireworks',
@@ -379,4 +433,6 @@ export const PROVIDER_ID_TO_OPENCODE: Record<ProviderId, string> = {
   venice: 'venice',
   nim: 'nim',
   custom: 'custom',
+  copilot: 'github-copilot',
+  'accomplish-ai': 'accomplish-ai',
 };

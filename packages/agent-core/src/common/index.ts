@@ -2,6 +2,9 @@
 
 // === TYPES ===
 
+// Gateway types
+export type { CreditUsage } from './types/gateway.js';
+
 // Task types
 export type {
   TaskStatus,
@@ -41,6 +44,8 @@ export type {
   LiteLLMModel,
   LiteLLMConfig,
   LMStudioConfig,
+  HuggingFaceLocalModelInfo,
+  HuggingFaceLocalConfig,
   NimModel,
   NimConfig,
 } from './types/provider.js';
@@ -52,6 +57,7 @@ export {
   ZAI_ENDPOINTS,
   MINIMAX_DEFAULT_BASE_URL,
   NIM_DEFAULT_BASE_URL,
+  COPILOT_MODELS,
 } from './types/provider.js';
 
 // Provider settings types
@@ -71,12 +77,15 @@ export type {
   LMStudioCredentials,
   AzureFoundryCredentials,
   OAuthCredentials,
+  CopilotOAuthCredentials,
+  AccomplishAiCredentials,
   CustomCredentials,
   NimCredentials,
   ProviderCredentials,
   ToolSupportStatus,
   ConnectedProvider,
   ProviderSettings,
+  HuggingFaceLocalCredentials,
 } from './types/providerSettings.js';
 export {
   PROVIDER_META,
@@ -138,6 +147,7 @@ export {
   THOUGHT_STREAM_PORT,
   PERMISSION_API_PORT,
   QUESTION_API_PORT,
+  WHATSAPP_API_PORT,
   PERMISSION_REQUEST_TIMEOUT_MS,
   CONNECTOR_AUTH_REQUIRED_MARKER,
   LOG_MAX_FILE_SIZE_BYTES,

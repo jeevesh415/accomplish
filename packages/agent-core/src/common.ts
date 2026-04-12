@@ -47,6 +47,8 @@ export type {
   LiteLLMModel,
   LiteLLMConfig,
   LMStudioConfig,
+  HuggingFaceLocalModelInfo,
+  HuggingFaceLocalConfig,
 } from './common/types/provider.js';
 export {
   DEFAULT_PROVIDERS,
@@ -54,6 +56,7 @@ export {
   ALLOWED_API_KEY_PROVIDERS,
   STANDARD_VALIDATION_PROVIDERS,
   ZAI_ENDPOINTS,
+  COPILOT_MODELS,
 } from './common/types/provider.js';
 
 // Provider settings types
@@ -79,7 +82,12 @@ export type {
   ToolSupportStatus,
   ConnectedProvider,
   ProviderSettings,
+  HuggingFaceLocalCredentials,
+  AccomplishAiCredentials,
 } from './common/types/providerSettings.js';
+
+// Gateway types
+export type { CreditUsage } from './common/types/gateway.js';
 export {
   PROVIDER_META,
   DEFAULT_MODELS,
@@ -122,6 +130,10 @@ export type {
   Workspace,
   WorkspaceCreateInput,
   WorkspaceUpdateInput,
+  KnowledgeNote,
+  KnowledgeNoteType,
+  KnowledgeNoteCreateInput,
+  KnowledgeNoteUpdateInput,
 } from './common/types/workspace.js';
 
 // Connector types
@@ -144,6 +156,21 @@ export type {
   CloudBrowserProviderConfig,
   CloudBrowserConfig,
 } from './common/types/cloud-browser.js';
+
+// Messaging integration types (ENG-684)
+export type {
+  MessagingPlatform,
+  MessagingProviderId,
+  MessagingConnectionStatus,
+  MessagingIntegrationConfig,
+  MessagingConfig,
+  MessagingQRCode,
+  IncomingMessage,
+  ChannelAdapter,
+} from './common/types/messaging.js';
+
+// Scheduler types
+export type { ScheduledTask } from './common/types/daemon.js';
 
 // Desktop control types
 export type {

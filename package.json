@@ -37,14 +37,25 @@
     "prepare": "husky"
   },
   "engines": {
-    "node": ">=20.0.0",
+    "node": ">=20.19.0",
     "pnpm": ">=9.0.0"
   },
   "packageManager": "pnpm@9.15.0",
   "pnpm": {
     "overrides": {
-      "fast-xml-parser": ">=5.3.4"
-    }
+      "fast-xml-parser": ">=5.3.4",
+      "tar": ">=7.5.8",
+      "@electron/rebuild>node-gyp": "^12.1.0",
+      "flatted": ">=3.4.2",
+      "minimatch": ">=9.0.6",
+      "music-metadata": ">=11.12.3",
+      "file-type": ">=21.3.1",
+      "audio-decode": "npm:empty-npm-package@1.0.0"
+    },
+    "ignoredOptionalDependencies": [
+      "audio-decode",
+      "sharp"
+    ]
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
@@ -56,7 +67,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
     "prettier": "^3.8.1",
-    "typescript-eslint": "^8.55.0",
+    "typescript-eslint": "^8.58.0",
     "wait-on": "^9.0.4"
   }
 }

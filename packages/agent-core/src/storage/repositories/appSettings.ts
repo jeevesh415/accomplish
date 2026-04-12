@@ -1,17 +1,59 @@
+import type { ThemePreference, LanguagePreference } from '../../types/storage.js';
+import type { SandboxConfig } from '../../common/types/sandbox.js';
+import type { CloudBrowserConfig } from '../../common/types/cloud-browser.js';
+import type { MessagingConfig } from '../../common/types/messaging.js';
 import type {
   SelectedModel,
   OllamaConfig,
   LiteLLMConfig,
   AzureFoundryConfig,
   LMStudioConfig,
-  NimConfig,
+  HuggingFaceLocalConfig,
 } from '../../common/types/provider.js';
-import type { ThemePreference } from '../../types/storage.js';
-import type { SandboxConfig } from '../../common/types/sandbox.js';
-import type { CloudBrowserConfig } from '../../common/types/cloud-browser.js';
 import { DEFAULT_SANDBOX_CONFIG } from '../../common/types/sandbox.js';
 import { getDatabase } from '../database.js';
 import { safeParseJsonWithFallback } from '../../utils/json.js';
+
+// Provider setting getters/setters
+export {
+  getSelectedModel,
+  setSelectedModel,
+  getOllamaConfig,
+  setOllamaConfig,
+  getLiteLLMConfig,
+  setLiteLLMConfig,
+  getAzureFoundryConfig,
+  setAzureFoundryConfig,
+  getLMStudioConfig,
+  setLMStudioConfig,
+  getHuggingFaceLocalConfig,
+  setHuggingFaceLocalConfig,
+  getNimConfig,
+  setNimConfig,
+  getOpenAiBaseUrl,
+  setOpenAiBaseUrl,
+} from './provider-settings.js';
+
+// UI setting getters/setters
+export {
+  getDebugMode,
+  setDebugMode,
+  getOnboardingComplete,
+  setOnboardingComplete,
+  getTheme,
+  setTheme,
+  getNotificationsEnabled,
+  setNotificationsEnabled,
+  getCloseBehavior,
+  setCloseBehavior,
+  getLanguage,
+  setLanguage,
+  VALID_THEMES,
+  VALID_LANGUAGES,
+} from './ui-settings.js';
+import { getLanguage as _getLanguage } from './ui-settings.js';
+
+export type { CloseBehavior } from './ui-settings.js';
 
 interface AppSettingsRow {
   id: number;
@@ -22,11 +64,12 @@ interface AppSettingsRow {
   litellm_config: string | null;
   azure_foundry_config: string | null;
   lmstudio_config: string | null;
+  huggingface_local_config: string | null;
   openai_base_url: string | null;
   theme: string;
-  run_in_background: number;
   sandbox_config: string;
   cloud_browser_config: string | null;
+  messaging_config: string | null;
   notifications_enabled: number;
   nim_config: string | null;
 }
@@ -39,170 +82,17 @@ export interface AppSettings {
   litellmConfig: LiteLLMConfig | null;
   azureFoundryConfig: AzureFoundryConfig | null;
   lmstudioConfig: LMStudioConfig | null;
+  huggingfaceLocalConfig: HuggingFaceLocalConfig | null;
   openaiBaseUrl: string;
   theme: ThemePreference;
-  runInBackground: boolean;
+  language: LanguagePreference;
 }
+
+const VALID_THEMES_LOCAL: ThemePreference[] = ['system', 'light', 'dark'];
 
 function getRow(): AppSettingsRow {
   const db = getDatabase();
   return db.prepare('SELECT * FROM app_settings WHERE id = 1').get() as AppSettingsRow;
-}
-
-export function getDebugMode(): boolean {
-  return getRow().debug_mode === 1;
-}
-
-export function setDebugMode(enabled: boolean): void {
-  const db = getDatabase();
-  db.prepare('UPDATE app_settings SET debug_mode = ? WHERE id = 1').run(enabled ? 1 : 0);
-}
-
-export function getOnboardingComplete(): boolean {
-  return getRow().onboarding_complete === 1;
-}
-
-export function setOnboardingComplete(complete: boolean): void {
-  const db = getDatabase();
-  db.prepare('UPDATE app_settings SET onboarding_complete = ? WHERE id = 1').run(complete ? 1 : 0);
-}
-
-export function getSelectedModel(): SelectedModel | null {
-  const row = getRow();
-  if (!row.selected_model) return null;
-  try {
-    return JSON.parse(row.selected_model) as SelectedModel;
-  } catch {
-    return null;
-  }
-}
-
-export function setSelectedModel(model: SelectedModel): void {
-  const db = getDatabase();
-  db.prepare('UPDATE app_settings SET selected_model = ? WHERE id = 1').run(JSON.stringify(model));
-}
-
-export function getOllamaConfig(): OllamaConfig | null {
-  const row = getRow();
-  if (!row.ollama_config) return null;
-  try {
-    return JSON.parse(row.ollama_config) as OllamaConfig;
-  } catch {
-    return null;
-  }
-}
-
-export function setOllamaConfig(config: OllamaConfig | null): void {
-  const db = getDatabase();
-  db.prepare('UPDATE app_settings SET ollama_config = ? WHERE id = 1').run(
-    config ? JSON.stringify(config) : null,
-  );
-}
-
-export function getLiteLLMConfig(): LiteLLMConfig | null {
-  const row = getRow();
-  if (!row.litellm_config) return null;
-  try {
-    return JSON.parse(row.litellm_config) as LiteLLMConfig;
-  } catch {
-    return null;
-  }
-}
-
-export function setLiteLLMConfig(config: LiteLLMConfig | null): void {
-  const db = getDatabase();
-  db.prepare('UPDATE app_settings SET litellm_config = ? WHERE id = 1').run(
-    config ? JSON.stringify(config) : null,
-  );
-}
-
-export function getAzureFoundryConfig(): AzureFoundryConfig | null {
-  const row = getRow();
-  if (!row.azure_foundry_config) return null;
-  try {
-    return JSON.parse(row.azure_foundry_config) as AzureFoundryConfig;
-  } catch {
-    return null;
-  }
-}
-
-export function setAzureFoundryConfig(config: AzureFoundryConfig | null): void {
-  const db = getDatabase();
-  db.prepare('UPDATE app_settings SET azure_foundry_config = ? WHERE id = 1').run(
-    config ? JSON.stringify(config) : null,
-  );
-}
-
-export function getLMStudioConfig(): LMStudioConfig | null {
-  const row = getRow();
-  if (!row.lmstudio_config) return null;
-  try {
-    return JSON.parse(row.lmstudio_config) as LMStudioConfig;
-  } catch {
-    return null;
-  }
-}
-
-export function setLMStudioConfig(config: LMStudioConfig | null): void {
-  const db = getDatabase();
-  db.prepare('UPDATE app_settings SET lmstudio_config = ? WHERE id = 1').run(
-    config ? JSON.stringify(config) : null,
-  );
-}
-
-export function getNimConfig(): NimConfig | null {
-  const row = getRow();
-  if (!row.nim_config) return null;
-  try {
-    return JSON.parse(row.nim_config) as NimConfig;
-  } catch {
-    return null;
-  }
-}
-
-export function setNimConfig(config: NimConfig | null): void {
-  const db = getDatabase();
-  db.prepare('UPDATE app_settings SET nim_config = ? WHERE id = 1').run(
-    config ? JSON.stringify(config) : null,
-  );
-}
-
-export function getOpenAiBaseUrl(): string {
-  const row = getRow();
-  return row.openai_base_url || '';
-}
-
-export function setOpenAiBaseUrl(baseUrl: string): void {
-  const db = getDatabase();
-  db.prepare('UPDATE app_settings SET openai_base_url = ? WHERE id = 1').run(baseUrl || '');
-}
-
-const VALID_THEMES: ThemePreference[] = ['system', 'light', 'dark'];
-
-export function getTheme(): ThemePreference {
-  const row = getRow();
-  const value = row.theme as ThemePreference;
-  if (VALID_THEMES.includes(value)) {
-    return value;
-  }
-  return 'system';
-}
-
-export function setTheme(theme: ThemePreference): void {
-  if (!VALID_THEMES.includes(theme)) {
-    throw new Error(`Invalid theme value: ${theme}`);
-  }
-  const db = getDatabase();
-  db.prepare('UPDATE app_settings SET theme = ? WHERE id = 1').run(theme);
-}
-
-export function getRunInBackground(): boolean {
-  return getRow().run_in_background === 1;
-}
-
-export function setRunInBackground(enabled: boolean): void {
-  const db = getDatabase();
-  db.prepare('UPDATE app_settings SET run_in_background = ? WHERE id = 1').run(enabled ? 1 : 0);
 }
 
 export function getSandboxConfig(): SandboxConfig {
@@ -244,17 +134,27 @@ export function setCloudBrowserConfig(config: CloudBrowserConfig | null): void {
   );
 }
 
-export function getNotificationsEnabled(): boolean {
-  return getRow().notifications_enabled === 1;
+export function getMessagingConfig(): MessagingConfig | null {
+  const row = getRow();
+  if (!row.messaging_config) return null;
+  try {
+    return JSON.parse(row.messaging_config) as MessagingConfig;
+  } catch {
+    return null;
+  }
 }
 
-export function setNotificationsEnabled(enabled: boolean): void {
+export function setMessagingConfig(config: MessagingConfig | null): void {
   const db = getDatabase();
-  db.prepare('UPDATE app_settings SET notifications_enabled = ? WHERE id = 1').run(enabled ? 1 : 0);
+  db.prepare('UPDATE app_settings SET messaging_config = ? WHERE id = 1').run(
+    config ? JSON.stringify(config) : null,
+  );
 }
 
 export function getAppSettings(): AppSettings {
   const row = getRow();
+  // Import getLanguage from ui-settings.js
+  // (already imported above as getLanguage)
   return {
     debugMode: row.debug_mode === 1,
     onboardingComplete: row.onboarding_complete === 1,
@@ -263,11 +163,14 @@ export function getAppSettings(): AppSettings {
     litellmConfig: safeParseJsonWithFallback<LiteLLMConfig>(row.litellm_config),
     azureFoundryConfig: safeParseJsonWithFallback<AzureFoundryConfig>(row.azure_foundry_config),
     lmstudioConfig: safeParseJsonWithFallback<LMStudioConfig>(row.lmstudio_config),
+    huggingfaceLocalConfig: safeParseJsonWithFallback<HuggingFaceLocalConfig>(
+      row.huggingface_local_config,
+    ),
     openaiBaseUrl: row.openai_base_url || '',
-    theme: VALID_THEMES.includes(row.theme as ThemePreference)
+    theme: VALID_THEMES_LOCAL.includes(row.theme as ThemePreference)
       ? (row.theme as ThemePreference)
       : 'system',
-    runInBackground: row.run_in_background === 1,
+    language: _getLanguage(),
   };
 }
 
@@ -282,12 +185,13 @@ export function clearAppSettings(): void {
       litellm_config = NULL,
       azure_foundry_config = NULL,
       lmstudio_config = NULL,
+      huggingface_local_config = NULL,
       nim_config = NULL,
       openai_base_url = '',
       theme = 'system',
-      run_in_background = 0,
       sandbox_config = '${JSON.stringify(DEFAULT_SANDBOX_CONFIG)}',
       cloud_browser_config = NULL,
+      messaging_config = NULL,
       notifications_enabled = 1
     WHERE id = 1`,
   ).run();

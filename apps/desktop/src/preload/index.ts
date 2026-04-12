@@ -6,6 +6,7 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { MessagingConnectionStatus } from '@accomplish_ai/agent-core/common';
 import type {
   ProviderType,
   Skill,
@@ -14,8 +15,17 @@ import type {
   Workspace,
   WorkspaceCreateInput,
   WorkspaceUpdateInput,
+  KnowledgeNote,
+  KnowledgeNoteCreateInput,
+  KnowledgeNoteUpdateInput,
 } from '@accomplish_ai/agent-core';
 import type { CloudBrowserConfig } from '@accomplish_ai/agent-core/common';
+
+// Safe analytics IPC invoke — silently catches "No handler" errors for OSS builds
+// where analytics IPC handlers are not registered.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const analyticsInvoke = (channel: string, ...args: any[]): Promise<void> =>
+  ipcRenderer.invoke(channel, ...args).catch(() => {});
 
 // Expose the accomplish API to the renderer
 const accomplishAPI = {
@@ -67,13 +77,20 @@ const accomplishAPI = {
     ipcRenderer.invoke('settings:set-debug-mode', enabled),
   getTheme: (): Promise<string> => ipcRenderer.invoke('settings:theme'),
   setTheme: (theme: string): Promise<void> => ipcRenderer.invoke('settings:set-theme', theme),
+  getLanguage: (): Promise<string> => ipcRenderer.invoke('settings:language'),
+  setLanguage: (language: string): Promise<void> =>
+    ipcRenderer.invoke('settings:set-language', language),
   onThemeChange: (callback: (data: { theme: string; resolved: string }) => void) => {
     const listener = (_: unknown, data: { theme: string; resolved: string }) => callback(data);
     ipcRenderer.on('settings:theme-changed', listener);
     return () => ipcRenderer.removeListener('settings:theme-changed', listener);
   },
-  getAppSettings: (): Promise<{ debugMode: boolean; onboardingComplete: boolean; theme: string }> =>
-    ipcRenderer.invoke('settings:app-settings'),
+  getAppSettings: (): Promise<{
+    debugMode: boolean;
+    onboardingComplete: boolean;
+    theme: string;
+    language: string;
+  }> => ipcRenderer.invoke('settings:app-settings'),
   getCloudBrowserConfig: (): Promise<CloudBrowserConfig | null> =>
     ipcRenderer.invoke('settings:cloud-browser-config:get'),
   setCloudBrowserConfig: (config: CloudBrowserConfig | null): Promise<void> =>
@@ -89,6 +106,18 @@ const accomplishAPI = {
     ipcRenderer.invoke('opencode:auth:slack:status'),
   loginSlackMcp: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('opencode:auth:slack:login'),
   logoutSlackMcp: (): Promise<void> => ipcRenderer.invoke('opencode:auth:slack:logout'),
+  getCopilotOAuthStatus: (): Promise<{
+    connected: boolean;
+    username?: string;
+    expiresAt?: number;
+  }> => ipcRenderer.invoke('opencode:auth:copilot:status'),
+  loginGithubCopilot: (): Promise<{
+    ok: boolean;
+    userCode?: string;
+    verificationUri?: string;
+    expiresIn?: number;
+  }> => ipcRenderer.invoke('opencode:auth:copilot:login'),
+  logoutGithubCopilot: (): Promise<void> => ipcRenderer.invoke('opencode:auth:copilot:logout'),
 
   // API Key management (new simplified handlers)
   hasApiKey: (): Promise<boolean> => ipcRenderer.invoke('api-key:exists'),
@@ -576,11 +605,36 @@ const accomplishAPI = {
   showSkillInFolder: (filePath: string): Promise<void> =>
     ipcRenderer.invoke('skills:show-in-folder', filePath),
 
-  // Daemon / Background Mode
-  getRunInBackground: (): Promise<boolean> => ipcRenderer.invoke('daemon:get-run-in-background'),
-  setRunInBackground: (enabled: boolean): Promise<void> =>
-    ipcRenderer.invoke('daemon:set-run-in-background', enabled),
+  // Daemon
   getDaemonSocketPath: (): Promise<string> => ipcRenderer.invoke('daemon:get-socket-path'),
+
+  // Daemon control
+  daemonPing: (): Promise<{ status: string; uptime: number }> => ipcRenderer.invoke('daemon:ping'),
+  daemonRestart: (): Promise<{ success: boolean }> => ipcRenderer.invoke('daemon:restart'),
+  daemonStop: (): Promise<{ success: boolean }> => ipcRenderer.invoke('daemon:stop'),
+  daemonStart: (): Promise<{ success: boolean }> => ipcRenderer.invoke('daemon:start'),
+
+  // Close behavior
+  getCloseBehavior: (): Promise<string> => ipcRenderer.invoke('daemon:get-close-behavior'),
+  setCloseBehavior: (behavior: string): Promise<void> =>
+    ipcRenderer.invoke('daemon:set-close-behavior', behavior),
+
+  // Daemon connection events
+  onDaemonDisconnected: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('daemon:disconnected', listener);
+    return () => ipcRenderer.removeListener('daemon:disconnected', listener);
+  },
+  onDaemonReconnected: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('daemon:reconnected', listener);
+    return () => ipcRenderer.removeListener('daemon:reconnected', listener);
+  },
+  onDaemonReconnectFailed: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('daemon:reconnect-failed', listener);
+    return () => ipcRenderer.removeListener('daemon:reconnect-failed', listener);
+  },
 
   // Favorites
   addFavorite: (taskId: string): Promise<void> => ipcRenderer.invoke('favorites:add', taskId),
@@ -636,6 +690,64 @@ const accomplishAPI = {
     };
   },
 
+  // HuggingFace Local configuration (ENG-687)
+  startHuggingFaceServer: (
+    modelId: string,
+  ): Promise<{ success: boolean; port?: number; error?: string }> =>
+    ipcRenderer.invoke('huggingface-local:start-server', modelId),
+  stopHuggingFaceServer: (): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('huggingface-local:stop-server'),
+  getHuggingFaceServerStatus: (): Promise<{
+    running: boolean;
+    port: number | null;
+    loadedModel: string | null;
+    isLoading: boolean;
+  }> => ipcRenderer.invoke('huggingface-local:server-status'),
+  getHuggingFaceLocalConfig: (): Promise<{
+    selectedModelId: string | null;
+    serverPort: number | null;
+    enabled: boolean;
+  } | null> => ipcRenderer.invoke('huggingface-local:get-config'),
+  setHuggingFaceLocalConfig: (
+    config: {
+      selectedModelId: string | null;
+      serverPort: number | null;
+      enabled: boolean;
+    } | null,
+  ): Promise<void> => ipcRenderer.invoke('huggingface-local:set-config', config),
+  testHuggingFaceConnection: (): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('huggingface-local:test-connection'),
+  downloadHuggingFaceModel: (modelId: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('huggingface-local:download-model', modelId),
+  listHuggingFaceModels: (): Promise<{
+    cached: Array<{ id: string; displayName: string; sizeBytes?: number; downloaded: boolean }>;
+    suggested: Array<{ id: string; displayName: string; sizeBytes?: number; downloaded: boolean }>;
+  }> => ipcRenderer.invoke('huggingface-local:list-models'),
+  deleteHuggingFaceModel: (modelId: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('huggingface-local:delete-model', modelId),
+  onHuggingFaceDownloadProgress: (
+    callback: (progress: {
+      modelId: string;
+      status: 'downloading' | 'complete' | 'error';
+      progress: number;
+      error?: string;
+    }) => void,
+  ) => {
+    const listener = (
+      _: unknown,
+      progress: {
+        modelId: string;
+        status: 'downloading' | 'complete' | 'error';
+        progress: number;
+        error?: string;
+      },
+    ) => callback(progress);
+    ipcRenderer.on('huggingface-local:download-progress', listener);
+    return () => {
+      ipcRenderer.removeListener('huggingface-local:download-progress', listener);
+    };
+  },
+
   // Debug bug reporting
   captureScreenshot: (): Promise<{
     success: boolean;
@@ -674,6 +786,20 @@ const accomplishAPI = {
     ipcRenderer.invoke('workspace:update', id, input),
   deleteWorkspace: (id: string): Promise<boolean> => ipcRenderer.invoke('workspace:delete', id),
 
+  // Knowledge Notes
+  listKnowledgeNotes: (workspaceId: string): Promise<KnowledgeNote[]> =>
+    ipcRenderer.invoke('knowledge-notes:list', workspaceId),
+  createKnowledgeNote: (input: KnowledgeNoteCreateInput): Promise<KnowledgeNote> =>
+    ipcRenderer.invoke('knowledge-notes:create', input),
+  updateKnowledgeNote: (
+    id: string,
+    workspaceId: string,
+    input: KnowledgeNoteUpdateInput,
+  ): Promise<KnowledgeNote | null> =>
+    ipcRenderer.invoke('knowledge-notes:update', id, workspaceId, input),
+  deleteKnowledgeNote: (id: string, workspaceId: string): Promise<boolean> =>
+    ipcRenderer.invoke('knowledge-notes:delete', id, workspaceId),
+
   // Workspace event subscriptions
   onWorkspaceChanged: (callback: (data: { workspaceId: string }) => void) => {
     const listener = (_: unknown, data: { workspaceId: string }) => callback(data);
@@ -684,6 +810,283 @@ const accomplishAPI = {
     const listener = (_: unknown, data: { workspaceId: string }) => callback(data);
     ipcRenderer.on('workspace:deleted', listener);
     return () => ipcRenderer.removeListener('workspace:deleted', listener);
+  },
+
+  // ── WhatsApp Integration (ENG-684) ─────────────────────────────────────────
+  // Contributed by aryan877 (PR #595), kartikangiras (PR #455)
+  getWhatsAppConfig: (): Promise<{
+    providerId: string;
+    enabled: boolean;
+    status: MessagingConnectionStatus;
+    phoneNumber?: string;
+    lastConnectedAt?: number;
+    qrCode?: string;
+    qrIssuedAt?: number;
+  } | null> => ipcRenderer.invoke('integrations:whatsapp:get-config'),
+
+  connectWhatsApp: (): Promise<void> => ipcRenderer.invoke('integrations:whatsapp:connect'),
+
+  disconnectWhatsApp: (): Promise<void> => ipcRenderer.invoke('integrations:whatsapp:disconnect'),
+
+  setWhatsAppEnabled: (enabled: boolean): Promise<void> =>
+    ipcRenderer.invoke('integrations:whatsapp:set-enabled', enabled),
+
+  onWhatsAppQR: (callback: (qr: string) => void): (() => void) => {
+    const listener = (_: unknown, qr: string) => callback(qr);
+    ipcRenderer.on('integrations:whatsapp:qr', listener);
+    return () => ipcRenderer.removeListener('integrations:whatsapp:qr', listener);
+  },
+
+  onWhatsAppStatus: (callback: (status: MessagingConnectionStatus) => void): (() => void) => {
+    const listener = (_: unknown, status: MessagingConnectionStatus) => callback(status);
+    ipcRenderer.on('integrations:whatsapp:status', listener);
+    return () => ipcRenderer.removeListener('integrations:whatsapp:status', listener);
+  },
+
+  // ── Scheduler ─────────────────────────────────────────────────────────────
+  listSchedules: (workspaceId?: string): Promise<unknown[]> =>
+    ipcRenderer.invoke('scheduler:list', workspaceId),
+  createSchedule: (cron: string, prompt: string, workspaceId?: string): Promise<unknown> =>
+    ipcRenderer.invoke('scheduler:create', cron, prompt, workspaceId),
+  deleteSchedule: (scheduleId: string): Promise<void> =>
+    ipcRenderer.invoke('scheduler:delete', scheduleId),
+  setScheduleEnabled: (scheduleId: string, enabled: boolean): Promise<void> =>
+    ipcRenderer.invoke('scheduler:set-enabled', scheduleId, enabled),
+  isAutoStartEnabled: (): Promise<boolean> => ipcRenderer.invoke('daemon:is-auto-start-enabled'),
+
+  // ── Accomplish AI Free Tier ──────────────────────────────────────────────
+  accomplishAiConnect: (): Promise<unknown> => ipcRenderer.invoke('accomplish-ai:connect'),
+  accomplishAiEnsureReady: (): Promise<unknown> => ipcRenderer.invoke('accomplish-ai:ensure-ready'),
+  accomplishAiDisconnect: (): Promise<void> => ipcRenderer.invoke('accomplish-ai:disconnect'),
+  accomplishAiGetUsage: (): Promise<unknown> => ipcRenderer.invoke('accomplish-ai:get-usage'),
+  accomplishAiGetStatus: (): Promise<{ connected: boolean }> =>
+    ipcRenderer.invoke('accomplish-ai:get-status'),
+  onAccomplishAiUsageUpdate: (callback: (usage: unknown) => void) => {
+    const listener = (_: unknown, usage: unknown) => callback(usage);
+    ipcRenderer.on('accomplish-ai:usage-updated', listener);
+    return () => ipcRenderer.removeListener('accomplish-ai:usage-updated', listener);
+  },
+
+  // ── Build Capabilities ───────────────────────────────────────────────────
+  getBuildCapabilities: (): Promise<{ hasFreeMode: boolean; hasAnalytics: boolean }> =>
+    ipcRenderer.invoke('app:get-build-capabilities'),
+
+  // ── App Close Dialog ────────────────────────────────────────────────────
+  onCloseRequested: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('app:close-requested', listener);
+    return () => ipcRenderer.removeListener('app:close-requested', listener);
+  },
+  respondToClose: (decision: 'keep-daemon' | 'stop-daemon' | 'cancel'): void => {
+    ipcRenderer.send('app:close-response', decision);
+  },
+
+  // ── Analytics ─────────────────────────────────────────────────────────────
+  // Renderer-side analytics bridge. Each method invokes a main-process IPC handler
+  // that calls the corresponding typed event helper.
+  // When analytics is disabled (OSS builds), handlers aren't registered — the
+  // analyticsInvoke wrapper catches the "No handler" rejection silently.
+  analytics: {
+    track: (eventName: string, params?: Record<string, string | number | boolean>): Promise<void> =>
+      analyticsInvoke('analytics:track', eventName, params),
+    trackPageView: (pagePath: string, pageTitle?: string): Promise<void> =>
+      analyticsInvoke('analytics:page-view', pagePath, pageTitle),
+
+    // Engagement
+    trackSubmitTask: (): Promise<void> => analyticsInvoke('analytics:submit-task'),
+    trackNewTask: (): Promise<void> => analyticsInvoke('analytics:new-task'),
+    trackOpenSettings: (): Promise<void> => analyticsInvoke('analytics:open-settings'),
+
+    // Settings
+    trackSaveApiKey: (
+      provider: string,
+      success: boolean,
+      connectionMethod?: string,
+    ): Promise<void> =>
+      analyticsInvoke('analytics:save-api-key', provider, success, connectionMethod),
+    trackSelectProvider: (provider: string): Promise<void> =>
+      analyticsInvoke('analytics:select-provider', provider),
+    trackSelectModel: (model: string, provider?: string): Promise<void> =>
+      analyticsInvoke('analytics:select-model', model, provider),
+    trackToggleDebugMode: (enabled: boolean): Promise<void> =>
+      analyticsInvoke('analytics:toggle-debug-mode', enabled),
+
+    // Task Lifecycle
+    trackTaskStart: (taskId: string, sessionId: string, taskType: string): Promise<void> =>
+      analyticsInvoke('analytics:task-start', taskId, sessionId, taskType),
+    trackTaskComplete: (
+      taskId: string,
+      sessionId: string,
+      taskType: string,
+      durationMs: number,
+      totalSteps: number,
+      hadErrors: boolean,
+    ): Promise<void> =>
+      ipcRenderer.invoke(
+        'analytics:task-complete',
+        taskId,
+        sessionId,
+        taskType,
+        durationMs,
+        totalSteps,
+        hadErrors,
+      ),
+    trackTaskError: (
+      taskId: string,
+      sessionId: string,
+      taskType: string,
+      durationMs: number,
+      totalSteps: number,
+      errorType: string,
+    ): Promise<void> =>
+      ipcRenderer.invoke(
+        'analytics:task-error',
+        taskId,
+        sessionId,
+        taskType,
+        durationMs,
+        totalSteps,
+        errorType,
+      ),
+    trackPermissionRequested: (
+      taskId: string,
+      sessionId: string,
+      taskType: string,
+      permissionType: string,
+    ): Promise<void> =>
+      ipcRenderer.invoke(
+        'analytics:permission-requested',
+        taskId,
+        sessionId,
+        taskType,
+        permissionType,
+      ),
+    trackPermissionResponse: (
+      taskId: string,
+      sessionId: string,
+      taskType: string,
+      permissionType: string,
+      granted: boolean,
+    ): Promise<void> =>
+      ipcRenderer.invoke(
+        'analytics:permission-response',
+        taskId,
+        sessionId,
+        taskType,
+        permissionType,
+        granted,
+      ),
+    trackToolUsed: (
+      taskId: string,
+      sessionId: string,
+      taskType: string,
+      toolName: string,
+    ): Promise<void> =>
+      analyticsInvoke('analytics:tool-used', taskId, sessionId, taskType, toolName),
+    trackUserInteraction: (
+      taskId: string,
+      sessionId: string,
+      taskType: string,
+      interactionType: string,
+      usedSuggestion: boolean,
+    ): Promise<void> =>
+      ipcRenderer.invoke(
+        'analytics:user-interaction',
+        taskId,
+        sessionId,
+        taskType,
+        interactionType,
+        usedSuggestion,
+      ),
+
+    // Session
+    trackAppClose: (): Promise<void> => analyticsInvoke('analytics:app-close'),
+    trackAppBackgrounded: (): Promise<void> => analyticsInvoke('analytics:app-backgrounded'),
+    trackAppForegrounded: (): Promise<void> => analyticsInvoke('analytics:app-foregrounded'),
+
+    // Model Selection
+    trackModelSelectionStep: (
+      step: string,
+      isOnboarding: boolean,
+      provider?: string,
+      model?: string,
+    ): Promise<void> =>
+      analyticsInvoke('analytics:model-selection-step', step, isOnboarding, provider, model),
+    trackModelSelectionComplete: (
+      provider: string,
+      isOnboarding: boolean,
+      model?: string,
+    ): Promise<void> =>
+      analyticsInvoke('analytics:model-selection-complete', provider, isOnboarding, model),
+    trackModelSelectionAbandoned: (lastStep: string, isOnboarding: boolean): Promise<void> =>
+      analyticsInvoke('analytics:model-selection-abandoned', lastStep, isOnboarding),
+
+    // Feature Usage
+    trackHistoryViewed: (): Promise<void> => analyticsInvoke('analytics:history-viewed'),
+    trackTaskFromHistory: (): Promise<void> => analyticsInvoke('analytics:task-from-history'),
+    trackHistoryCleared: (): Promise<void> => analyticsInvoke('analytics:history-cleared'),
+    trackTaskDetailsExpanded: (): Promise<void> =>
+      analyticsInvoke('analytics:task-details-expanded'),
+    trackOutputCopied: (): Promise<void> => analyticsInvoke('analytics:output-copied'),
+
+    // Provider Lifecycle
+    trackProviderDisconnected: (provider: string): Promise<void> =>
+      analyticsInvoke('analytics:provider-disconnected', provider),
+    trackHelpLinkClicked: (provider: string): Promise<void> =>
+      analyticsInvoke('analytics:help-link-clicked', provider),
+
+    // Skills
+    trackSkillAction: (params: {
+      action: string;
+      skill_name?: string;
+      enabled?: boolean;
+      filter?: string;
+      source?: string;
+    }): Promise<void> => analyticsInvoke('analytics:skill-action', params),
+
+    // Voice
+    trackSaveVoiceApiKey: (success: boolean): Promise<void> =>
+      analyticsInvoke('analytics:save-voice-api-key', success),
+
+    // Debug
+    trackExportLogs: (): Promise<void> => analyticsInvoke('analytics:export-logs'),
+    trackThreadExported: (): Promise<void> => analyticsInvoke('analytics:thread-exported'),
+
+    // Task Launcher
+    trackTaskLauncherAction: (action: string): Promise<void> =>
+      analyticsInvoke('analytics:task-launcher-action', action),
+
+    // Task Feedback
+    trackTaskFeedback: (
+      taskId: string,
+      sessionId: string,
+      rating: string,
+      taskStatus: string,
+      feedbackStage: string,
+      feedbackReason?: string,
+      feedbackText?: string,
+    ): Promise<void> =>
+      ipcRenderer.invoke(
+        'analytics:task-feedback',
+        taskId,
+        sessionId,
+        rating,
+        taskStatus,
+        feedbackStage,
+        feedbackReason,
+        feedbackText,
+      ),
+
+    // Agent Control
+    trackStopAgent: (taskId: string, sessionId: string): Promise<void> =>
+      analyticsInvoke('analytics:stop-agent', taskId, sessionId),
+
+    // Provider Box
+    trackProviderBoxClicked: (params: {
+      provider_id: string;
+      is_connected: boolean;
+      is_onboarding: boolean;
+    }): Promise<void> => analyticsInvoke('analytics:provider-box-clicked', params),
   },
 };
 

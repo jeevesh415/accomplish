@@ -1,11 +1,13 @@
 import type { Task, TaskStatus, TaskMessage } from '../common/types/task.js';
 import type { TodoItem } from '../common/types/todo.js';
+import type { CreditUsage } from '../common/types/gateway.js';
 import type {
   SelectedModel,
   OllamaConfig,
   LiteLLMConfig,
   AzureFoundryConfig,
   LMStudioConfig,
+  HuggingFaceLocalConfig,
   NimConfig,
 } from '../common/types/provider.js';
 import type {
@@ -16,7 +18,9 @@ import type {
 import type { McpConnector, ConnectorStatus, OAuthTokens } from '../common/types/connector.js';
 import type { SandboxConfig } from '../common/types/sandbox.js';
 import type { CloudBrowserConfig } from '../common/types/cloud-browser.js';
+import type { MessagingConfig } from '../common/types/messaging.js';
 import type { BlocklistEntry } from '../common/types/desktop.js';
+import type { ScheduledTask } from '../common/types/daemon.js';
 
 /** Options for creating a Storage instance */
 export interface StorageOptions {
@@ -53,6 +57,7 @@ export interface StoredFavorite {
   favoritedAt: string;
 }
 export type ThemePreference = 'system' | 'light' | 'dark';
+export type LanguagePreference = 'auto' | 'en' | 'zh-CN' | 'ru' | 'fr';
 
 /** Application settings snapshot */
 export interface AppSettings {
@@ -63,9 +68,10 @@ export interface AppSettings {
   litellmConfig: LiteLLMConfig | null;
   azureFoundryConfig: AzureFoundryConfig | null;
   lmstudioConfig: LMStudioConfig | null;
+  huggingfaceLocalConfig: HuggingFaceLocalConfig | null;
   openaiBaseUrl: string;
   theme: ThemePreference;
-  runInBackground: boolean;
+  language: LanguagePreference;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +144,10 @@ export interface AppSettingsAPI {
   getLMStudioConfig(): LMStudioConfig | null;
   /** Set the LM Studio configuration */
   setLMStudioConfig(config: LMStudioConfig | null): void;
+  /** Get the Hugging Face Local configuration */
+  getHuggingFaceLocalConfig(): HuggingFaceLocalConfig | null;
+  /** Set the Hugging Face Local configuration */
+  setHuggingFaceLocalConfig(config: HuggingFaceLocalConfig | null): void;
   /** Get the NVIDIA NIM configuration */
   getNimConfig(): NimConfig | null;
   /** Set the NVIDIA NIM configuration */
@@ -150,18 +160,26 @@ export interface AppSettingsAPI {
   getTheme(): ThemePreference;
   /** Set the theme preference */
   setTheme(theme: ThemePreference): void;
-  /** Get whether the app runs in background (system tray) mode */
-  getRunInBackground(): boolean;
-  /** Set background run mode */
-  setRunInBackground(enabled: boolean): void;
   /** Get cloud browser configuration */
   getCloudBrowserConfig(): CloudBrowserConfig | null;
   /** Set cloud browser configuration */
   setCloudBrowserConfig(config: CloudBrowserConfig | null): void;
+  /** Get messaging integration configuration (ENG-684) */
+  getMessagingConfig(): MessagingConfig | null;
+  /** Set messaging integration configuration (ENG-684) */
+  setMessagingConfig(config: MessagingConfig | null): void;
   /** Get whether desktop notifications are enabled */
   getNotificationsEnabled(): boolean;
   /** Enable or disable desktop notifications */
   setNotificationsEnabled(enabled: boolean): void;
+  /** Get the window close button behavior ('keep-daemon' | 'stop-daemon') */
+  getCloseBehavior(): 'keep-daemon' | 'stop-daemon';
+  /** Set the window close button behavior */
+  setCloseBehavior(behavior: 'keep-daemon' | 'stop-daemon'): void;
+  /** Get the user's UI language preference */
+  getLanguage(): LanguagePreference;
+  /** Set the user's UI language preference */
+  setLanguage(language: LanguagePreference): void;
   /** Get all application settings as a snapshot */
   getAppSettings(): AppSettings;
   /** Reset all application settings to defaults */
@@ -204,10 +222,18 @@ export interface ProviderSettingsAPI {
   hasReadyProvider(): boolean;
   /** Get IDs of all connected providers */
   getConnectedProviderIds(): ProviderId[];
+  /** Get cached Accomplish AI credit usage (last known from gateway) */
+  getAccomplishAiCredits(): CreditUsage | null;
+  /** Cache Accomplish AI credit usage */
+  saveAccomplishAiCredits(usage: CreditUsage): void;
 }
 
 /** API for encrypted credential storage (AES-256-GCM) */
 export interface SecureStorageAPI {
+  /** Store an arbitrary encrypted value by key */
+  set(key: string, value: string): void;
+  /** Retrieve an arbitrary encrypted value by key */
+  get(key: string): string | null;
   /** Store an API key for a provider */
   storeApiKey(provider: string, apiKey: string): void;
   /** Retrieve an API key for a provider */
@@ -278,7 +304,27 @@ export interface DesktopControlStorageAPI {
   removeDesktopBlocklistEntry(appName: string): void;
 }
 
-/** Unified storage API combining task, settings, provider, secure storage, connector, desktop control, and database lifecycle operations */
+/** API for cron-based scheduled task persistence */
+export interface SchedulerStorageAPI {
+  /** Get all scheduled tasks */
+  getAllScheduledTasks(): ScheduledTask[];
+  /** Get only enabled scheduled tasks */
+  getEnabledScheduledTasks(): ScheduledTask[];
+  /** Get scheduled tasks scoped to a workspace */
+  getScheduledTasksByWorkspace(workspaceId: string): ScheduledTask[];
+  /** Get a scheduled task by ID */
+  getScheduledTaskById(id: string): ScheduledTask | null;
+  /** Create a new scheduled task */
+  createScheduledTask(cron: string, prompt: string, workspaceId?: string): ScheduledTask;
+  /** Delete a scheduled task */
+  deleteScheduledTask(id: string): void;
+  /** Enable or disable a scheduled task */
+  setScheduledTaskEnabled(id: string, enabled: boolean): void;
+  /** Update the last run timestamp and next run time */
+  updateScheduledTaskLastRun(id: string, timestamp: string, nextRunAt: string): void;
+}
+
+/** Unified storage API combining task, settings, provider, secure storage, connector, desktop control, scheduler, and database lifecycle operations */
 export interface StorageAPI
   extends
     TaskStorageAPI,
@@ -287,6 +333,7 @@ export interface StorageAPI
     SecureStorageAPI,
     ConnectorStorageAPI,
     DesktopControlStorageAPI,
+    SchedulerStorageAPI,
     DatabaseLifecycleAPI {}
 
 export type {
@@ -306,4 +353,5 @@ export type {
   ConnectorStatus,
   OAuthTokens,
   CloudBrowserConfig,
+  MessagingConfig,
 };

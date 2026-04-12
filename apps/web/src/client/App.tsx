@@ -12,6 +12,8 @@ import { OAuthProviderId } from '@accomplish_ai/agent-core/common';
 import Sidebar from './components/layout/Sidebar';
 import { TaskLauncher } from './components/TaskLauncher';
 import { AuthErrorToast } from './components/AuthErrorToast';
+import { DaemonConnectionToast } from './components/DaemonConnectionToast';
+import { CloseConfirmDialog } from './components/CloseConfirmDialog';
 import SettingsDialog from './components/layout/SettingsDialog';
 import { useTaskStore } from './stores/taskStore';
 import { SpinnerGap, Warning } from '@phosphor-icons/react';
@@ -32,6 +34,20 @@ function AnimatedOutlet() {
  */
 function AnimatedOutletWrapper() {
   const location = useLocation();
+
+  // Analytics: track page views on route changes
+  useEffect(() => {
+    if (isRunningInElectron()) {
+      try {
+        getAccomplish()
+          .analytics?.trackPageView(location.pathname)
+          .catch(() => {});
+      } catch {
+        /* not in Electron or analytics unavailable */
+      }
+    }
+  }, [location.pathname]);
+
   return (
     <AnimatePresence mode="wait">
       <motion.div
@@ -55,7 +71,7 @@ export function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [authSettingsOpen, setAuthSettingsOpen] = useState(false);
   const [authSettingsTab, setAuthSettingsTab] = useState<
-    'providers' | 'voice' | 'skills' | 'connectors' | 'about'
+    'providers' | 'voice' | 'skills' | 'integrations' | 'scheduler' | 'general' | 'about'
   >('providers');
   const [authSettingsProvider, setAuthSettingsProvider] = useState<ProviderId | undefined>(
     undefined,
@@ -69,7 +85,7 @@ export function App() {
     if (authError) {
       if (authError.providerId === OAuthProviderId.Slack) {
         setAuthSettingsProvider(undefined);
-        setAuthSettingsTab('connectors');
+        setAuthSettingsTab('integrations');
       } else {
         setAuthSettingsProvider(authError.providerId as ProviderId);
         setAuthSettingsTab('providers');
@@ -164,6 +180,17 @@ export function App() {
 
       {/* Auth Error Toast - shown when OAuth session expires */}
       <AuthErrorToast error={authError} onReLogin={handleAuthReLogin} onDismiss={clearAuthError} />
+
+      {/* Daemon Connection Toast - shown when daemon disconnects */}
+      <DaemonConnectionToast
+        onOpenSettings={() => {
+          setAuthSettingsTab('general');
+          setAuthSettingsOpen(true);
+        }}
+      />
+
+      {/* Close Confirmation Dialog - themed replacement for native OS dialog */}
+      <CloseConfirmDialog />
 
       {/* Settings Dialog for re-authentication */}
       <SettingsDialog

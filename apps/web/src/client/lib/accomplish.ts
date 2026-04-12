@@ -28,12 +28,19 @@ import type {
   Workspace,
   WorkspaceCreateInput,
   WorkspaceUpdateInput,
+  KnowledgeNote,
+  KnowledgeNoteCreateInput,
+  KnowledgeNoteUpdateInput,
   StoredFavorite,
   BrowserFramePayload,
   BrowserStatusPayload,
   BrowserNavigatePayload,
 } from '@accomplish_ai/agent-core';
-import type { CloudBrowserConfig } from '@accomplish_ai/agent-core/common';
+import type {
+  CloudBrowserConfig,
+  MessagingConnectionStatus,
+  ScheduledTask,
+} from '@accomplish_ai/agent-core/common';
 
 // Define the API interface
 interface AccomplishAPI {
@@ -104,9 +111,32 @@ interface AccomplishAPI {
   getTheme(): Promise<string>;
   setTheme(theme: string): Promise<void>;
   onThemeChange?(callback: (data: { theme: string; resolved: string }) => void): () => void;
-  getAppSettings(): Promise<{ debugMode: boolean; onboardingComplete: boolean; theme: string }>;
+  getLanguage(): Promise<string>;
+  setLanguage(language: string): Promise<void>;
+  getAppSettings(): Promise<{
+    debugMode: boolean;
+    onboardingComplete: boolean;
+    theme: string;
+    language: string;
+  }>;
   getCloudBrowserConfig(): Promise<CloudBrowserConfig | null>;
   setCloudBrowserConfig(config: CloudBrowserConfig | null): Promise<void>;
+
+  getWhatsAppConfig(): Promise<{
+    providerId: string;
+    enabled: boolean;
+    status: MessagingConnectionStatus;
+    phoneNumber?: string;
+    lastConnectedAt?: number;
+    qrCode?: string;
+    qrIssuedAt?: number;
+  } | null>;
+  connectWhatsApp(): Promise<void>;
+  disconnectWhatsApp(): Promise<void>;
+  setWhatsAppEnabled(enabled: boolean): Promise<void>;
+  onWhatsAppQR(callback: (qr: string) => void): () => void;
+  onWhatsAppStatus(callback: (status: MessagingConnectionStatus) => void): () => void;
+
   getOpenAiBaseUrl(): Promise<string>;
   setOpenAiBaseUrl(baseUrl: string): Promise<void>;
   getOpenAiOauthStatus(): Promise<{ connected: boolean; expires?: number }>;
@@ -114,6 +144,14 @@ interface AccomplishAPI {
   getSlackMcpOauthStatus(): Promise<{ connected: boolean; pendingAuthorization: boolean }>;
   loginSlackMcp(): Promise<{ ok: boolean }>;
   logoutSlackMcp(): Promise<void>;
+  getCopilotOAuthStatus(): Promise<{ connected: boolean; username?: string; expiresAt?: number }>;
+  loginGithubCopilot(): Promise<{
+    ok: boolean;
+    userCode?: string;
+    verificationUri?: string;
+    expiresIn?: number;
+  }>;
+  logoutGithubCopilot(): Promise<void>;
 
   // API Key management
   hasApiKey(): Promise<boolean>;
@@ -295,6 +333,45 @@ interface AccomplishAPI {
     } | null,
   ): Promise<void>;
 
+  // HuggingFace configuration (ENG-687)
+  getHuggingFaceLocalConfig(): Promise<{
+    selectedModelId: string | null;
+    serverPort: number | null;
+    enabled: boolean;
+  } | null>;
+  setHuggingFaceLocalConfig(
+    config: {
+      selectedModelId: string | null;
+      serverPort: number | null;
+      enabled: boolean;
+    } | null,
+  ): Promise<void>;
+  listHuggingFaceModels(): Promise<{
+    cached: Array<{ id: string; displayName: string; sizeBytes?: number; downloaded: boolean }>;
+    suggested: Array<{ id: string; displayName: string; sizeBytes?: number; downloaded: boolean }>;
+  }>;
+  downloadHuggingFaceModel(modelId: string): Promise<{ success: boolean; error?: string }>;
+  startHuggingFaceServer(
+    modelId: string,
+  ): Promise<{ success: boolean; port?: number; error?: string }>;
+  stopHuggingFaceServer(): Promise<{ success: boolean; error?: string }>;
+  getHuggingFaceServerStatus(): Promise<{
+    running: boolean;
+    port: number | null;
+    loadedModel: string | null;
+    isLoading: boolean;
+  }>;
+  testHuggingFaceConnection(): Promise<{ success: boolean; error?: string }>;
+  deleteHuggingFaceModel(modelId: string): Promise<{ success: boolean; error?: string }>;
+  onHuggingFaceDownloadProgress(
+    callback: (progress: {
+      modelId: string;
+      status: 'downloading' | 'complete' | 'error';
+      progress: number;
+      error?: string;
+    }) => void,
+  ): () => void;
+
   // NVIDIA NIM configuration
   testNimConnection(
     url: string,
@@ -387,7 +464,6 @@ interface AccomplishAPI {
   onAuthError?(callback: (data: { providerId: string; message: string }) => void): () => void;
 
   // Browser Preview (ENG-695)
-  // Contributed by dhruvawani17 (PR #489), samarthsinh2660 (PR #414), david-mamani (PR #553)
   onBrowserFrame?(callback: (event: BrowserFramePayload & { taskId: string }) => void): () => void;
   onBrowserNavigate?(
     callback: (event: BrowserNavigatePayload & { taskId: string; pageName: string }) => void,
@@ -458,6 +534,16 @@ interface AccomplishAPI {
   updateWorkspace(id: string, input: WorkspaceUpdateInput): Promise<Workspace | null>;
   deleteWorkspace(id: string): Promise<boolean>;
 
+  // Knowledge Notes
+  listKnowledgeNotes(workspaceId: string): Promise<KnowledgeNote[]>;
+  createKnowledgeNote(input: KnowledgeNoteCreateInput): Promise<KnowledgeNote>;
+  updateKnowledgeNote(
+    id: string,
+    workspaceId: string,
+    input: KnowledgeNoteUpdateInput,
+  ): Promise<KnowledgeNote | null>;
+  deleteKnowledgeNote(id: string, workspaceId: string): Promise<boolean>;
+
   // Workspace event subscriptions
   onWorkspaceChanged?(callback: (data: { workspaceId: string }) => void): () => void;
   onWorkspaceDeleted?(callback: (data: { workspaceId: string }) => void): () => void;
@@ -476,10 +562,27 @@ interface AccomplishAPI {
   openSkillInEditor(filePath: string): Promise<void>;
   showSkillInFolder(filePath: string): Promise<void>;
 
-  // Daemon / Background Mode
-  getRunInBackground(): Promise<boolean>;
-  setRunInBackground(enabled: boolean): Promise<void>;
+  // Daemon
   getDaemonSocketPath(): Promise<string>;
+
+  // Daemon control
+  daemonPing(): Promise<{ status: string; uptime: number }>;
+  daemonRestart(): Promise<{ success: boolean }>;
+  daemonStop(): Promise<{ success: boolean }>;
+  daemonStart(): Promise<{ success: boolean }>;
+
+  // Close behavior
+  getCloseBehavior(): Promise<string>;
+  setCloseBehavior(behavior: string): Promise<void>;
+
+  // App close dialog
+  onCloseRequested?(callback: () => void): () => void;
+  respondToClose?(decision: 'keep-daemon' | 'stop-daemon' | 'cancel'): void;
+
+  // Daemon connection events
+  onDaemonDisconnected(callback: () => void): () => void;
+  onDaemonReconnected(callback: () => void): () => void;
+  onDaemonReconnectFailed(callback: () => void): () => void;
 
   // Sandbox configuration
   getSandboxConfig(): Promise<{
@@ -499,6 +602,13 @@ interface AccomplishAPI {
     networkPolicy?: { allowOutbound: boolean; allowedHosts?: string[] };
   }): Promise<void>;
 
+  // Scheduler
+  listSchedules(workspaceId?: string): Promise<ScheduledTask[]>;
+  createSchedule(cron: string, prompt: string, workspaceId?: string): Promise<ScheduledTask>;
+  deleteSchedule(scheduleId: string): Promise<void>;
+  setScheduleEnabled(scheduleId: string, enabled: boolean): Promise<void>;
+  isAutoStartEnabled(): Promise<boolean>;
+
   // MCP Connectors
   getConnectors(): Promise<McpConnector[]>;
   addConnector(name: string, url: string): Promise<McpConnector>;
@@ -508,6 +618,139 @@ interface AccomplishAPI {
   completeConnectorOAuth(state: string, code: string): Promise<McpConnector>;
   disconnectConnector(connectorId: string): Promise<void>;
   onMcpAuthCallback?(callback: (url: string) => void): () => void;
+
+  // Accomplish AI Free Tier
+  accomplishAiConnect(): Promise<{
+    deviceFingerprint: string;
+    spentCredits: number;
+    remainingCredits: number;
+    totalCredits: number;
+    resetsAt: string;
+  }>;
+  accomplishAiEnsureReady(): Promise<{ deviceFingerprint: string }>;
+  accomplishAiDisconnect(): Promise<void>;
+  accomplishAiGetUsage(): Promise<{
+    spentCredits: number;
+    remainingCredits: number;
+    totalCredits: number;
+    resetsAt: string;
+  }>;
+  accomplishAiGetStatus(): Promise<{ connected: boolean }>;
+  onAccomplishAiUsageUpdate(
+    callback: (usage: {
+      spentCredits: number;
+      remainingCredits: number;
+      totalCredits: number;
+      resetsAt: string;
+    }) => void,
+  ): () => void;
+
+  // Build capabilities
+  getBuildCapabilities(): Promise<{ hasFreeMode: boolean; hasAnalytics: boolean }>;
+
+  // Analytics — renderer-side tracking bridge
+  analytics: {
+    track(eventName: string, params?: Record<string, string | number | boolean>): Promise<void>;
+    trackPageView(pagePath: string, pageTitle?: string): Promise<void>;
+    trackSubmitTask(): Promise<void>;
+    trackNewTask(): Promise<void>;
+    trackOpenSettings(): Promise<void>;
+    trackSaveApiKey(provider: string, success: boolean, connectionMethod?: string): Promise<void>;
+    trackSelectProvider(provider: string): Promise<void>;
+    trackSelectModel(model: string, provider?: string): Promise<void>;
+    trackToggleDebugMode(enabled: boolean): Promise<void>;
+    trackTaskStart(taskId: string, sessionId: string, taskType: string): Promise<void>;
+    trackTaskComplete(
+      taskId: string,
+      sessionId: string,
+      taskType: string,
+      durationMs: number,
+      totalSteps: number,
+      hadErrors: boolean,
+    ): Promise<void>;
+    trackTaskError(
+      taskId: string,
+      sessionId: string,
+      taskType: string,
+      durationMs: number,
+      totalSteps: number,
+      errorType: string,
+    ): Promise<void>;
+    trackPermissionRequested(
+      taskId: string,
+      sessionId: string,
+      taskType: string,
+      permissionType: string,
+    ): Promise<void>;
+    trackPermissionResponse(
+      taskId: string,
+      sessionId: string,
+      taskType: string,
+      permissionType: string,
+      granted: boolean,
+    ): Promise<void>;
+    trackToolUsed(
+      taskId: string,
+      sessionId: string,
+      taskType: string,
+      toolName: string,
+    ): Promise<void>;
+    trackUserInteraction(
+      taskId: string,
+      sessionId: string,
+      taskType: string,
+      interactionType: string,
+      usedSuggestion: boolean,
+    ): Promise<void>;
+    trackAppClose(): Promise<void>;
+    trackAppBackgrounded(): Promise<void>;
+    trackAppForegrounded(): Promise<void>;
+    trackModelSelectionStep(
+      step: string,
+      isOnboarding: boolean,
+      provider?: string,
+      model?: string,
+    ): Promise<void>;
+    trackModelSelectionComplete(
+      provider: string,
+      isOnboarding: boolean,
+      model?: string,
+    ): Promise<void>;
+    trackModelSelectionAbandoned(lastStep: string, isOnboarding: boolean): Promise<void>;
+    trackHistoryViewed(): Promise<void>;
+    trackTaskFromHistory(): Promise<void>;
+    trackHistoryCleared(): Promise<void>;
+    trackTaskDetailsExpanded(): Promise<void>;
+    trackOutputCopied(): Promise<void>;
+    trackProviderDisconnected(provider: string): Promise<void>;
+    trackHelpLinkClicked(provider: string): Promise<void>;
+    trackSkillAction(params: {
+      action: string;
+      skill_name?: string;
+      enabled?: boolean;
+      filter?: string;
+      source?: string;
+    }): Promise<void>;
+    trackSaveVoiceApiKey(success: boolean): Promise<void>;
+    trackExportLogs(): Promise<void>;
+    trackThreadExported(): Promise<void>;
+    trackTaskLauncherAction(action: string): Promise<void>;
+    trackTaskFeedback(
+      taskId: string,
+      sessionId: string,
+      rating: string,
+      taskStatus: string,
+      feedbackStage: string,
+      feedbackReason?: string,
+      feedbackText?: string,
+    ): Promise<void>;
+    trackStopAgent(taskId: string, sessionId: string): Promise<void>;
+    trackProviderBoxClicked(params: {
+      provider_id: string;
+      is_connected: boolean;
+      is_onboarding: boolean;
+    }): Promise<void>;
+  };
 }
 
 interface AccomplishShell {
@@ -570,6 +813,24 @@ export function getAccomplish() {
     detectVertexProject: () => window.accomplish!.detectVertexProject(),
 
     listVertexProjects: () => window.accomplish!.listVertexProjects(),
+
+    listHuggingFaceModels: () => window.accomplish!.listHuggingFaceModels(),
+
+    downloadHuggingFaceModel: (modelId: string) =>
+      window.accomplish!.downloadHuggingFaceModel(modelId),
+
+    startHuggingFaceServer: (modelId: string) => window.accomplish!.startHuggingFaceServer(modelId),
+
+    stopHuggingFaceServer: () => window.accomplish!.stopHuggingFaceServer(),
+
+    onHuggingFaceDownloadProgress: (
+      callback: (progress: {
+        modelId: string;
+        status: 'downloading' | 'complete' | 'error';
+        progress: number;
+        error?: string;
+      }) => void,
+    ) => window.accomplish!.onHuggingFaceDownloadProgress(callback),
   };
 }
 

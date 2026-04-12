@@ -13,14 +13,16 @@ export {
   setAzureFoundryConfig,
   getLMStudioConfig,
   setLMStudioConfig,
+  getHuggingFaceLocalConfig,
+  setHuggingFaceLocalConfig,
   getNimConfig,
   setNimConfig,
   getOpenAiBaseUrl,
   setOpenAiBaseUrl,
   getTheme,
   setTheme,
-  getRunInBackground,
-  setRunInBackground,
+  getLanguage,
+  setLanguage,
   getAppSettings,
   clearAppSettings,
   type AppSettings,
@@ -83,3 +85,23 @@ export {
   deleteConnector,
   clearAllConnectors,
 } from './connectors.js';
+
+export {
+  listKnowledgeNotes,
+  getKnowledgeNote,
+  createKnowledgeNote,
+  updateKnowledgeNote,
+  deleteKnowledgeNote,
+  getKnowledgeNotesForPrompt,
+} from './knowledgeNotes.js';
+
+export {
+  getAllScheduledTasks,
+  getEnabledScheduledTasks,
+  getScheduledTasksByWorkspace,
+  getScheduledTaskById,
+  createScheduledTask,
+  deleteScheduledTask,
+  setScheduledTaskEnabled,
+  updateScheduledTaskLastRun,
+} from './scheduled-tasks.js';
