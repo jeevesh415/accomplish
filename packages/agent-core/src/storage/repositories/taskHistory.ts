@@ -68,8 +68,9 @@ export function saveTask(task: Task, workspaceId?: string | null): void {
 
     const insertMessage = db.prepare(
       `INSERT INTO task_messages
-        (id, task_id, type, content, tool_name, tool_input, timestamp, sort_order)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, task_id, type, content, tool_name, tool_input, timestamp, sort_order,
+         tool_status, model_id, provider_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
 
     const insertAttachment = db.prepare(
@@ -87,6 +88,9 @@ export function saveTask(task: Task, workspaceId?: string | null): void {
         msg.toolInput ? JSON.stringify(msg.toolInput) : null,
         msg.timestamp,
         sortOrder++,
+        msg.toolStatus || null,
+        msg.modelId || null,
+        msg.providerId || null,
       );
 
       if (msg.attachments) {
@@ -142,10 +146,33 @@ export function addTaskMessage(taskId: string, message: TaskMessage): void {
 
     const sortOrder = (maxOrder.max ?? -1) + 1;
 
+    // INSERT … ON CONFLICT(id) DO UPDATE (SQLite upsert). The SDK-cutover
+    // port introduced stable message IDs so a single tool row can
+    // transition `running → completed/error` in the UI without producing
+    // duplicate bubbles (see `mergeTaskMessage` + `upsertTaskMessages`).
+    // The persistence layer MUST honour the same semantics — the daemon's
+    // `onBatchedMessages` callback calls this on every batch, including
+    // repeat IDs, and a plain INSERT throws `SQLITE_CONSTRAINT_PRIMARYKEY`
+    // on the second write.
+    //
+    // On conflict:
+    //   - Preserve `task_id`, `type`, `timestamp`, `sort_order` — these
+    //     are set at first insert and should stay stable.
+    //   - Update content, tool_name, tool_input, tool_status, model_id,
+    //     provider_id from the incoming row — these are what actually
+    //     change across a running→completed transition.
     db.prepare(
       `INSERT INTO task_messages
-        (id, task_id, type, content, tool_name, tool_input, timestamp, sort_order)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, task_id, type, content, tool_name, tool_input, timestamp, sort_order,
+         tool_status, model_id, provider_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        content = excluded.content,
+        tool_name = excluded.tool_name,
+        tool_input = excluded.tool_input,
+        tool_status = excluded.tool_status,
+        model_id = excluded.model_id,
+        provider_id = excluded.provider_id`,
     ).run(
       message.id,
       taskId,
@@ -155,13 +182,25 @@ export function addTaskMessage(taskId: string, message: TaskMessage): void {
       message.toolInput ? JSON.stringify(message.toolInput) : null,
       message.timestamp,
       sortOrder,
+      message.toolStatus || null,
+      message.modelId || null,
+      message.providerId || null,
     );
 
     if (message.attachments) {
+      // Re-stamp attachments on every upsert. The SDK's merge semantics
+      // (see `mergeTaskMessage` / `upsertTaskMessages`) emit the FULL
+      // attachment list per message update, so the authoritative view is
+      // always the latest one. DELETE-then-INSERT models this exactly and
+      // — critically — is the only approach that dedupes correctly: the
+      // v001 `task_attachments` schema has only an autoincrement PK, no
+      // UNIQUE constraint on `(message_id, type, data)`, so an earlier
+      // `INSERT OR IGNORE` attempt was a no-op and would still accumulate
+      // duplicates on repeated writes (Codex R3 P2).
+      db.prepare('DELETE FROM task_attachments WHERE message_id = ?').run(message.id);
       const insertAttachment = db.prepare(
         `INSERT INTO task_attachments (message_id, type, data, label) VALUES (?, ?, ?, ?)`,
       );
-
       for (const att of message.attachments) {
         insertAttachment.run(message.id, att.type, att.data, att.label || null);
       }

@@ -56,8 +56,6 @@ function resolveMcpCommand(
 export interface BuildMcpServersOptions {
   mcpToolsPath: string;
   nodeExe: string;
-  permissionApiPort: number;
-  questionApiPort: number;
   /** Port for the WhatsApp HTTP API (daemon). Omit to disable the tool. */
   whatsappApiPort?: number;
   browserConfig: BrowserConfig;
@@ -84,8 +82,6 @@ export function buildMcpServers(options: BuildMcpServersOptions): Record<string,
   const {
     mcpToolsPath,
     nodeExe,
-    permissionApiPort,
-    questionApiPort,
     whatsappApiPort,
     browserConfig,
     authToken,
@@ -103,20 +99,6 @@ export function buildMcpServers(options: BuildMcpServersOptions): Record<string,
       type: 'remote',
       url: OPENCODE_SLACK_MCP_SERVER_URL,
       oauth: { clientId: OPENCODE_SLACK_MCP_CLIENT_ID },
-    },
-    'file-permission': {
-      type: 'local',
-      command: resolveMcpCommand(mcpToolsPath, 'file-permission', 'dist/index.mjs', nodeExe),
-      enabled: true,
-      environment: { PERMISSION_API_PORT: String(permissionApiPort), ...authEnv },
-      timeout: 30000,
-    },
-    'ask-user-question': {
-      type: 'local',
-      command: resolveMcpCommand(mcpToolsPath, 'ask-user-question', 'dist/index.mjs', nodeExe),
-      enabled: true,
-      environment: { QUESTION_API_PORT: String(questionApiPort), ...authEnv },
-      timeout: 600000, // 10 minutes — user needs time to read and respond
     },
     'request-connector-auth': {
       type: 'local',
@@ -136,13 +118,6 @@ export function buildMcpServers(options: BuildMcpServersOptions): Record<string,
       command: resolveMcpCommand(mcpToolsPath, 'start-task', 'dist/index.mjs', nodeExe),
       enabled: true,
       timeout: 30000,
-    },
-    'desktop-control': {
-      type: 'local',
-      command: resolveMcpCommand(mcpToolsPath, 'desktop-control', 'dist/index.mjs', nodeExe),
-      enabled: true,
-      environment: { PERMISSION_API_PORT: String(permissionApiPort), ...authEnv },
-      timeout: 60000,
     },
   };
 

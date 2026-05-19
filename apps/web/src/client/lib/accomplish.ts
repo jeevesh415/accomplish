@@ -42,6 +42,8 @@ import type {
   ScheduledTask,
   GoogleAccount,
   GoogleAccountStatus,
+  OAuthProviderId,
+  ConnectorAuthStatus,
 } from '@accomplish_ai/agent-core/common';
 
 interface GwsAPI {
@@ -52,6 +54,12 @@ interface GwsAPI {
   updateLabel(id: string, label: string): Promise<void>;
   cancelAuth(state: string): Promise<void>;
   onStatusChanged(callback: (id: string, status: GoogleAccountStatus) => void): () => void;
+  /**
+   * Emitted when the background OAuth consumer can't register the account
+   * (missing refresh token, storage failure, etc.). Timeout / user-cancel
+   * don't fire on this channel. See M5 review finding P2.3.
+   */
+  onAuthError(callback: (payload: { message: string }) => void): () => void;
 }
 
 // Define the API interface
@@ -630,6 +638,15 @@ interface AccomplishAPI {
   completeConnectorOAuth(state: string, code: string): Promise<McpConnector>;
   disconnectConnector(connectorId: string): Promise<void>;
   onMcpAuthCallback?(callback: (url: string) => void): () => void;
+
+  // Built-in connector OAuth (Jira, GitHub, Notion, monday.com, Lightdash, Datadog)
+  getBuiltInConnectorAuthStatus(): Promise<ConnectorAuthStatus[]>;
+  loginBuiltInConnector(providerId: OAuthProviderId): Promise<{ ok: boolean }>;
+  logoutBuiltInConnector(providerId: OAuthProviderId): Promise<void>;
+  lightdashGetServerUrl(): Promise<string | null>;
+  lightdashSetServerUrl(url: string): Promise<void>;
+  datadogGetServerUrl(): Promise<string | null>;
+  datadogSetServerUrl(url: string): Promise<void>;
 
   // Accomplish AI Free Tier
   accomplishAiConnect(): Promise<{

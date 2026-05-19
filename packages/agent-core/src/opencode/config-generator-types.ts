@@ -21,8 +21,6 @@ export interface ConfigGeneratorOptions {
   isPackaged: boolean;
   providerConfigs?: ProviderConfig[];
   azureFoundryToken?: string;
-  permissionApiPort?: number;
-  questionApiPort?: number;
   /** Port for the WhatsApp HTTP API (daemon). Omit to disable the MCP tool. */
   whatsappApiPort?: number;
   /** Optional auth token for daemon API endpoints */
@@ -40,8 +38,20 @@ export interface ConfigGeneratorOptions {
     url: string;
     accessToken: string;
   }>;
-  /** Formatted workspace knowledge notes to inject into the system prompt */
-  knowledgeNotes?: string;
+  /**
+   * Binding, `instruction`-type workspace knowledge notes. Rendered under a
+   * MANDATORY wrapper that explicitly overrides conversational-bypass
+   * default-concise behavior. Pre-formatted as a bullet list (one `- ...`
+   * per line). Empty/undefined when no instruction notes exist.
+   */
+  knowledgeInstructions?: string;
+  /**
+   * Soft, `context`/`reference`-type workspace knowledge notes. Rendered
+   * under a "persistent workspace context" wrapper — background info, not
+   * binding rules. Pre-formatted with `### Context` / `### Reference`
+   * sub-headers. Empty/undefined when no context notes exist.
+   */
+  knowledgeContext?: string;
   /** UI language preference — instructs the agent to reply in the user's language */
   language?: string;
   /**
@@ -63,6 +73,12 @@ export interface ConfigGeneratorOptions {
    * Only accounts with status 'connected' should be included.
    */
   gwsAccountsSummary?: Array<{ label: string; email: string; status: string }>;
+
+  /**
+   * Live connection status of all 8 built-in connectors for system-prompt injection.
+   * Populated by the desktop layer from ConnectorAuthStore instances.
+   */
+  builtInConnectorStatuses?: Array<{ displayName: string; connected: boolean }>;
 }
 
 export interface ProviderConfig {

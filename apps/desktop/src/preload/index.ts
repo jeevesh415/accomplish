@@ -18,8 +18,13 @@ import type {
   KnowledgeNote,
   KnowledgeNoteCreateInput,
   KnowledgeNoteUpdateInput,
-} from '@accomplish_ai/agent-core';
-import type { CloudBrowserConfig, GoogleAccount } from '@accomplish_ai/agent-core/common';
+} from '@accomplish_ai/agent-core/desktop-main';
+import type {
+  CloudBrowserConfig,
+  GoogleAccount,
+  OAuthProviderId,
+  ConnectorAuthStatus,
+} from '@accomplish_ai/agent-core/common';
 
 // Safe analytics IPC invoke — silently catches "No handler" errors for OSS builds
 // where analytics IPC handlers are not registered.
@@ -690,6 +695,21 @@ const accomplishAPI = {
     };
   },
 
+  // Built-in connector OAuth (Jira, GitHub, Notion, monday.com, Lightdash, Datadog + Slack parity)
+  getBuiltInConnectorAuthStatus: (): Promise<ConnectorAuthStatus[]> =>
+    ipcRenderer.invoke('connectors:get-built-in-auth-status'),
+  loginBuiltInConnector: (providerId: OAuthProviderId): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('connectors:built-in-login', providerId),
+  logoutBuiltInConnector: (providerId: OAuthProviderId): Promise<void> =>
+    ipcRenderer.invoke('connectors:built-in-logout', providerId),
+  lightdashGetServerUrl: (): Promise<string | null> =>
+    ipcRenderer.invoke('lightdash:get-server-url'),
+  lightdashSetServerUrl: (url: string): Promise<void> =>
+    ipcRenderer.invoke('lightdash:set-server-url', url),
+  datadogGetServerUrl: (): Promise<string | null> => ipcRenderer.invoke('datadog:get-server-url'),
+  datadogSetServerUrl: (url: string): Promise<void> =>
+    ipcRenderer.invoke('datadog:set-server-url', url),
+
   // HuggingFace Local configuration (ENG-687)
   startHuggingFaceServer: (
     modelId: string,
@@ -897,6 +917,18 @@ const accomplishAPI = {
       const listener = (_: unknown, id: string, status: string) => callback(id, status);
       ipcRenderer.on('gws:account:status-changed', listener);
       return () => ipcRenderer.removeListener('gws:account:status-changed', listener);
+    },
+    /**
+     * Subscribe to Google OAuth failure events. The handler fires when the
+     * background callback consumer can't register the account — missing
+     * refresh token (see M5 review finding P2.3), label collision, daemon
+     * storage failure, etc. Silent paths (timeout, user cancel) are not
+     * forwarded on this channel.
+     */
+    onAuthError: (callback: (payload: { message: string }) => void): (() => void) => {
+      const listener = (_: unknown, payload: { message: string }) => callback(payload);
+      ipcRenderer.on('gws:account:auth-error', listener);
+      return () => ipcRenderer.removeListener('gws:account:auth-error', listener);
     },
   },
 
